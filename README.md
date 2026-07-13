@@ -6,6 +6,8 @@ ExpenseTracker is a trip and group expense tracker built with HTML, CSS, JavaScr
 
 - Set a trip name and total budget.
 - Create multiple expense cards and click a card to open its details.
+- Share an expense code so other people can join the same card.
+- Remember joined expense cards on each device.
 - Add trip members.
 - Add categories such as transport, food, stay, shopping, or tickets.
 - Edit and delete categories.
@@ -85,9 +87,20 @@ Samsung phone -> Railway app -> Railway PostgreSQL
 
 7. Open the Railway public domain on your phone.
 
+## Sharing Expense Cards
+
+When you create an expense card, the app shows a code such as `TRIP8K2Q`.
+
+- Send that code to another person.
+- They open the same Railway URL.
+- They enter the code in **Expense code** and click **Join**.
+- Their browser remembers the card after joining once.
+
+Anyone with the code can view and edit that expense card.
+
 ## Database Tables
 
-- `projects`: trip name and budget.
+- `projects`: trip name, budget, and share code.
 - `members`: people participating in the trip.
 - `categories`: main expense groups.
 - `expense_items`: sub category expenses with amount, payment method, and payer.

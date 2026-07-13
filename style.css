@@ -170,6 +170,48 @@ select:focus {
   margin-bottom: 18px;
 }
 
+.join-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin: 0 0 14px;
+}
+
+.share-code-box {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 14px;
+  padding: 12px;
+  border: 1px solid rgba(34, 116, 90, 0.18);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.share-code-box small,
+.share-code-box strong {
+  display: block;
+}
+
+.share-code-box small {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.share-code-box strong {
+  margin-top: 3px;
+  color: var(--green);
+  font-size: 1.1rem;
+}
+
+.share-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .section-heading-row {
   display: flex;
   gap: 14px;
@@ -557,7 +599,11 @@ form.is-disabled select {
   }
 
   .section-heading-row,
+  .join-form,
+  .share-code-box,
+  .share-actions,
   .row-actions {
+    display: flex;
     flex-direction: column;
     align-items: stretch;
   }

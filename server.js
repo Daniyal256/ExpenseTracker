@@ -101,12 +101,38 @@ function cleanId(value, fieldName) {
   return id;
 }
 
+function cleanShareCode(value) {
+  const code = String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!code) throw new Error('Expense code is required.');
+  return code.slice(0, 16);
+}
+
+function getKnownCodesFromUrl(requestedUrl) {
+  const rawCodes = requestedUrl.searchParams.get('codes') || '';
+  const singleCode = requestedUrl.searchParams.get('code') || '';
+  return [...rawCodes.split(','), singleCode]
+    .map(code => code.trim().toUpperCase().replace(/[^A-Z0-9]/g, ''))
+    .filter(Boolean)
+    .slice(0, 50);
+}
+
+function makeShareCode(name) {
+  const prefix = String(name || 'TRIP')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '')
+    .slice(0, 6) || 'TRIP';
+  const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `${prefix}${suffix}`.slice(0, 12);
+}
+
 async function getState(requestPath = '/api/state') {
   const db = await getReadyPool();
   const requestedUrl = new URL(requestPath, `http://${HOST}:${PORT}`);
   const requestedProjectId = Number(requestedUrl.searchParams.get('projectId'));
-  const projects = await getProjects(db);
+  const knownCodes = getKnownCodesFromUrl(requestedUrl);
+  const projects = await getProjects(db, knownCodes);
   const projectId = Number.isInteger(requestedProjectId) && requestedProjectId > 0
+    && projects.some(project => Number(project.id) === requestedProjectId)
     ? requestedProjectId
     : projects[0]?.id;
 
@@ -122,7 +148,7 @@ async function getState(requestPath = '/api/state') {
 
   const [projectResult, memberResult, categoryResult, itemResult] = await Promise.all([
     db.query(
-      'SELECT project_id AS id, name, budget FROM projects WHERE project_id = $1',
+      'SELECT project_id AS id, share_code AS "shareCode", name, budget FROM projects WHERE project_id = $1',
       [projectId]
     ),
     db.query(
@@ -156,9 +182,12 @@ async function getState(requestPath = '/api/state') {
   };
 }
 
-async function getProjects(db) {
+async function getProjects(db, knownCodes = []) {
+  if (!knownCodes.length) return [];
+
   const result = await db.query(`
     SELECT p.project_id AS id,
+           p.share_code AS "shareCode",
            p.name,
            p.budget,
            COALESCE(SUM(e.amount), 0) AS spent,
@@ -166,9 +195,10 @@ async function getProjects(db) {
     FROM projects p
     LEFT JOIN categories c ON c.project_id = p.project_id
     LEFT JOIN expense_items e ON e.category_id = c.category_id
+    WHERE p.share_code = ANY($1::text[])
     GROUP BY p.project_id, p.name, p.budget, p.created_at
     ORDER BY p.created_at DESC, p.project_id DESC
-  `);
+  `, [knownCodes]);
 
   return result.rows;
 }
@@ -188,10 +218,34 @@ async function updateBudget(payload) {
     return projectId;
   }
 
+  const result = await insertProjectWithCode(db, name, budget);
+  return result.rows[0].id;
+}
+
+async function insertProjectWithCode(db, name, budget) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const shareCode = makeShareCode(name);
+    try {
+      return await db.query(
+        'INSERT INTO projects (share_code, name, budget) VALUES ($1, $2, $3) RETURNING project_id AS id',
+        [shareCode, name, budget]
+      );
+    } catch (error) {
+      if (error.code !== '23505') throw error;
+    }
+  }
+  throw new Error('Could not create a unique expense code. Try again.');
+}
+
+async function joinProject(payload) {
+  const db = await getReadyPool();
+  const shareCode = cleanShareCode(payload.code);
   const result = await db.query(
-    'INSERT INTO projects (name, budget) VALUES ($1, $2) RETURNING project_id AS id',
-    [name, budget]
+    'SELECT project_id AS id FROM projects WHERE share_code = $1',
+    [shareCode]
   );
+
+  if (!result.rows[0]) throw new Error('No expense card found for that code.');
   return result.rows[0].id;
 }
 
@@ -302,6 +356,7 @@ async function handleApi(req, res) {
       const payload = await readBody(req);
       let selectedProjectId = payload.projectId;
       if (route === '/api/budget') selectedProjectId = await updateBudget(payload);
+      else if (route === '/api/join') selectedProjectId = await joinProject(payload);
       else if (route === '/api/members') await addMember(payload);
       else if (route === '/api/categories') await addCategory(payload);
       else if (route === '/api/categories/update') await updateCategory(payload);
@@ -313,7 +368,10 @@ async function handleApi(req, res) {
         return;
       }
 
-      const statePath = selectedProjectId ? `/api/state?projectId=${selectedProjectId}` : '/api/state';
+      const stateParams = new URLSearchParams();
+      if (selectedProjectId) stateParams.set('projectId', selectedProjectId);
+      if (route === '/api/join' && payload.code) stateParams.set('code', cleanShareCode(payload.code));
+      const statePath = `/api/state${stateParams.toString() ? `?${stateParams}` : ''}`;
       sendJson(res, 200, await getState(statePath));
       return;
     }

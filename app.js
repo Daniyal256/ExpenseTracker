@@ -6,6 +6,7 @@ const formatter = new Intl.NumberFormat('en-PK', {
 
 let activeProjectId = null;
 let creatingNewProject = false;
+const codeStoreKey = 'expenseTrackerCodes';
 let state = {
   projects: [],
   project: null,
@@ -20,6 +21,12 @@ const els = {
   projectName: document.querySelector('#projectName'),
   budgetInput: document.querySelector('#budgetInput'),
   newProjectButton: document.querySelector('#newProjectButton'),
+  joinForm: document.querySelector('#joinForm'),
+  joinCode: document.querySelector('#joinCode'),
+  shareCodeBox: document.querySelector('#shareCodeBox'),
+  shareCodeText: document.querySelector('#shareCodeText'),
+  shareExpenseButton: document.querySelector('#shareExpenseButton'),
+  copyCodeButton: document.querySelector('#copyCodeButton'),
   projectList: document.querySelector('#projectList'),
   memberForm: document.querySelector('#memberForm'),
   memberName: document.querySelector('#memberName'),
@@ -57,7 +64,11 @@ async function apiRequest(path, payload) {
 
 async function syncFromServer(projectId = activeProjectId) {
   try {
-    const path = projectId ? `/api/state?projectId=${projectId}` : '/api/state';
+    const codes = getStoredCodes();
+    const params = new URLSearchParams();
+    if (projectId) params.set('projectId', projectId);
+    if (codes.length) params.set('codes', codes.join(','));
+    const path = `/api/state${params.toString() ? `?${params}` : ''}`;
     state = await apiRequest(path);
     activeProjectId = state.project?.id || null;
     creatingNewProject = false;
@@ -71,8 +82,37 @@ async function syncFromServer(projectId = activeProjectId) {
 async function mutate(path, payload) {
   state = await apiRequest(path, payload);
   activeProjectId = state.project?.id || null;
+  rememberCode(state.project?.shareCode);
   creatingNewProject = false;
   render();
+}
+
+function getStoredCodes() {
+  try {
+    const codes = JSON.parse(localStorage.getItem(codeStoreKey) || '[]');
+    return Array.isArray(codes) ? codes.filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberCode(code) {
+  if (!code) return;
+  const nextCodes = [code, ...getStoredCodes().filter(savedCode => savedCode !== code)].slice(0, 30);
+  localStorage.setItem(codeStoreKey, JSON.stringify(nextCodes));
+}
+
+function getSharePayload() {
+  const code = state.project?.shareCode;
+  const tripName = state.project?.name || 'ExpenseTracker trip';
+  const url = window.location.origin;
+  const text = `Join my ExpenseTracker card "${tripName}" with code ${code}. Open ${url} and enter the code.`;
+
+  return {
+    title: tripName,
+    text,
+    url
+  };
 }
 
 function activeProjectPayload() {
@@ -108,6 +148,8 @@ function render() {
   els.projectName.value = creatingNewProject ? '' : state.project?.name || '';
   els.budgetInput.value = creatingNewProject ? '' : budget || '';
   els.budgetButton.textContent = state.project && !creatingNewProject ? 'Save expense' : 'Create expense';
+  els.shareCodeText.textContent = state.project?.shareCode || '';
+  els.shareCodeBox.hidden = !state.project?.shareCode || creatingNewProject;
   els.budgetTotal.textContent = formatter.format(budget);
   els.spentTotal.textContent = formatter.format(spent);
   els.remainingTotal.textContent = formatter.format(remaining);
@@ -137,7 +179,7 @@ function renderProjects() {
       <button class="project-card ${isActive ? 'active' : ''}" type="button" data-project-id="${project.id}">
         <span>
           <strong>${escapeHtml(project.name)}</strong>
-          <small>${Number(project.itemCount || 0)} ${Number(project.itemCount || 0) === 1 ? 'expense item' : 'expense items'}</small>
+          <small>${escapeHtml(project.shareCode)} · ${Number(project.itemCount || 0)} ${Number(project.itemCount || 0) === 1 ? 'expense item' : 'expense items'}</small>
         </span>
         <span class="project-card-metrics">
           <b>${formatter.format(spent)}</b>
@@ -315,6 +357,52 @@ function showToast(message) {
 }
 
 els.newProjectButton.addEventListener('click', startNewProject);
+
+els.joinForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const code = els.joinCode.value.trim();
+  if (!code) return;
+
+  try {
+    await mutate('/api/join', { code });
+    els.joinForm.reset();
+    showToast('Expense card joined.');
+  } catch (error) {
+    showToast(`Could not join expense: ${error.message}`);
+  }
+});
+
+els.copyCodeButton.addEventListener('click', async () => {
+  const code = state.project?.shareCode;
+  if (!code) return;
+
+  try {
+    await navigator.clipboard.writeText(code);
+    showToast('Expense code copied.');
+  } catch {
+    showToast(`Expense code: ${code}`);
+  }
+});
+
+els.shareExpenseButton.addEventListener('click', async () => {
+  const code = state.project?.shareCode;
+  if (!code) return;
+
+  const payload = getSharePayload();
+  try {
+    if (navigator.share) {
+      await navigator.share(payload);
+      return;
+    }
+
+    await navigator.clipboard.writeText(payload.text);
+    showToast('Share message copied.');
+  } catch (error) {
+    if (error.name !== 'AbortError') {
+      showToast(`Expense code: ${code}`);
+    }
+  }
+});
 
 els.projectList.addEventListener('click', event => {
   const card = event.target.closest('.project-card');

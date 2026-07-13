@@ -1,9 +1,20 @@
 CREATE TABLE IF NOT EXISTS projects (
     project_id SERIAL PRIMARY KEY,
+    share_code VARCHAR(16) UNIQUE,
     name VARCHAR(120) NOT NULL,
     budget NUMERIC(12,2) NOT NULL CHECK (budget >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS share_code VARCHAR(16);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_projects_share_code ON projects(share_code);
+
+UPDATE projects
+SET share_code = UPPER(SUBSTRING(MD5(project_id::text || created_at::text), 1, 8))
+WHERE share_code IS NULL;
+
+ALTER TABLE projects ALTER COLUMN share_code SET NOT NULL;
 
 CREATE TABLE IF NOT EXISTS members (
     member_id SERIAL PRIMARY KEY,

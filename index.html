@@ -53,9 +53,26 @@
       <div class="section-heading-row">
         <div class="section-title">
           <span>Expense cards</span>
-          <small>Create a new expense, then click a card to open its details</small>
+          <small>Create a card or join one with an expense code</small>
         </div>
         <button id="newProjectButton" class="secondary-button" type="button">New expense</button>
+      </div>
+      <form id="joinForm" class="join-form" autocomplete="off">
+        <label>
+          <span>Expense code</span>
+          <input id="joinCode" type="text" placeholder="Enter shared code">
+        </label>
+        <button type="submit">Join</button>
+      </form>
+      <div id="shareCodeBox" class="share-code-box" hidden>
+        <span>
+          <small>Current expense code</small>
+          <strong id="shareCodeText"></strong>
+        </span>
+        <div class="share-actions">
+          <button id="shareExpenseButton" class="secondary-button" type="button">Share</button>
+          <button id="copyCodeButton" class="secondary-button" type="button">Copy code</button>
+        </div>
       </div>
       <div id="projectList" class="project-list"></div>
     </section>
