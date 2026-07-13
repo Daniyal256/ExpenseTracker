@@ -71,7 +71,7 @@ async function apiRequest(path, payload) {
 async function syncFromServer(projectId = activeProjectId) {
   try {
     const codes = getStoredCodes();
-    if (!codes.length && !projectId) {
+    if (!codes.length) {
       state = { projects: [], project: null, members: [], categories: [], expenses: [] };
       activeProjectId = null;
       creatingNewProject = false;
@@ -127,8 +127,10 @@ function forgetCurrentProject() {
   state = { projects: [], project: null, members: [], categories: [], expenses: [] };
   activeProjectId = null;
   creatingNewProject = false;
+  els.projectName.value = '';
+  els.budgetInput.value = '';
+  els.joinForm.reset();
   render();
-  syncFromServer();
 }
 
 function getActiveAccessCode() {
