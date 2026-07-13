@@ -27,6 +27,106 @@ body {
     linear-gradient(135deg, #eef4ed 0%, #dfeadf 42%, #f1e6d7 100%);
 }
 
+body.sidebar-open {
+  overflow: hidden;
+}
+
+.registered-cards-button {
+  position: fixed;
+  z-index: 40;
+  top: 20px;
+  left: 20px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 0.72rem 0.9rem;
+  box-shadow: 0 14px 34px rgba(34, 56, 43, 0.2);
+}
+
+.registered-cards-button strong {
+  display: grid;
+  min-width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--green);
+  background: rgba(255, 255, 255, 0.9);
+  font-size: 0.75rem;
+}
+
+.menu-icon {
+  display: grid;
+  gap: 3px;
+  width: 18px;
+}
+
+.menu-icon i {
+  display: block;
+  height: 2px;
+  border-radius: 99px;
+  background: currentColor;
+}
+
+.sidebar-backdrop {
+  position: fixed;
+  z-index: 48;
+  inset: 0;
+  background: rgba(22, 32, 28, 0.28);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+.registered-cards-sidebar {
+  position: fixed;
+  z-index: 50;
+  inset: 0 auto 0 0;
+  width: min(390px, calc(100vw - 28px));
+  padding: 22px;
+  overflow-y: auto;
+  border-right: 1px solid rgba(255, 255, 255, 0.8);
+  background: rgba(238, 244, 237, 0.94);
+  box-shadow: 24px 0 70px rgba(34, 56, 43, 0.22);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  transform: translateX(-105%);
+  visibility: hidden;
+  transition: transform 220ms ease, visibility 220ms ease;
+}
+
+.registered-cards-sidebar.open {
+  transform: translateX(0);
+  visibility: visible;
+}
+
+.sidebar-header {
+  display: flex;
+  gap: 16px;
+  align-items: start;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.sidebar-header .section-title {
+  margin-bottom: 0;
+}
+
+.sidebar-close-button {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: none;
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+.sidebar-project-list {
+  grid-template-columns: 1fr;
+}
+
 button,
 input,
 select {
@@ -58,7 +158,7 @@ button:active {
 .shell {
   width: min(1180px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 32px 0 48px;
+  padding: 84px 0 48px;
 }
 
 .hero-panel,
@@ -586,9 +686,18 @@ form.is-disabled select {
 }
 
 @media (max-width: 560px) {
+  .registered-cards-button {
+    top: 12px;
+    left: 12px;
+  }
+
+  .registered-cards-button > span:not(.menu-icon) {
+    display: none;
+  }
+
   .shell {
     width: min(100% - 22px, 1180px);
-    padding-top: 12px;
+    padding-top: 72px;
   }
 
   .hero-panel,

@@ -34,6 +34,11 @@ const els = {
   modifierActions: document.querySelector('#modifierActions'),
   deleteProjectButton: document.querySelector('#deleteProjectButton'),
   leaveProjectButton: document.querySelector('#leaveProjectButton'),
+  registeredCardsButton: document.querySelector('#registeredCardsButton'),
+  registeredCardsSidebar: document.querySelector('#registeredCardsSidebar'),
+  registeredCardCount: document.querySelector('#registeredCardCount'),
+  closeSidebarButton: document.querySelector('#closeSidebarButton'),
+  sidebarBackdrop: document.querySelector('#sidebarBackdrop'),
   projectList: document.querySelector('#projectList'),
   memberForm: document.querySelector('#memberForm'),
   memberName: document.querySelector('#memberName'),
@@ -121,17 +126,48 @@ function rememberCode(code) {
 }
 
 function forgetCurrentProject() {
+  const forgottenProjectId = state.project?.id;
   const knownProjectCodes = [state.project?.viewerCode, state.project?.modifierCode].filter(Boolean);
   if (!knownProjectCodes.length) return;
   const nextCodes = getStoredCodes().filter(savedCode => !knownProjectCodes.includes(savedCode));
   localStorage.setItem(codeStoreKey, JSON.stringify(nextCodes));
-  state = { projects: [], project: null, members: [], categories: [], expenses: [] };
+  state = {
+    projects: state.projects.filter(project => Number(project.id) !== Number(forgottenProjectId)),
+    project: null,
+    members: [],
+    categories: [],
+    expenses: []
+  };
   activeProjectId = null;
   creatingNewProject = false;
   els.projectName.value = '';
   els.budgetInput.value = '';
   els.joinForm.reset();
   render();
+}
+
+function leaveCurrentProject() {
+  state = {
+    ...state,
+    project: null,
+    members: [],
+    categories: [],
+    expenses: []
+  };
+  activeProjectId = null;
+  creatingNewProject = false;
+  els.projectName.value = '';
+  els.budgetInput.value = '';
+  els.joinForm.reset();
+  render();
+}
+
+function setRegisteredCardsSidebar(open) {
+  els.registeredCardsSidebar.classList.toggle('open', open);
+  els.registeredCardsSidebar.setAttribute('aria-hidden', String(!open));
+  els.registeredCardsButton.setAttribute('aria-expanded', String(open));
+  els.sidebarBackdrop.hidden = !open;
+  document.body.classList.toggle('sidebar-open', open);
 }
 
 function getActiveAccessCode() {
@@ -206,8 +242,10 @@ function render() {
 }
 
 function renderProjects() {
+  els.registeredCardCount.textContent = state.projects.length;
+
   if (!state.projects.length) {
-    els.projectList.innerHTML = '<div class="empty">No expense cards yet. Create your first one from the budget panel.</div>';
+    els.projectList.innerHTML = '<div class="empty">No cards are registered on this device yet. Create one or join with a code.</div>';
     return;
   }
 
@@ -487,8 +525,8 @@ els.shareModifierButton.addEventListener('click', async () => {
 });
 
 els.leaveProjectButton.addEventListener('click', () => {
-  forgetCurrentProject();
-  showToast('Expense card removed from this device.');
+  leaveCurrentProject();
+  showToast('Card closed. You can reopen it from Registered cards.');
 });
 
 els.deleteProjectButton.addEventListener('click', async () => {
@@ -512,7 +550,22 @@ els.deleteProjectButton.addEventListener('click', async () => {
 els.projectList.addEventListener('click', event => {
   const card = event.target.closest('.project-card');
   if (!card) return;
+  setRegisteredCardsSidebar(false);
   syncFromServer(Number(card.dataset.projectId));
+});
+
+els.registeredCardsButton.addEventListener('click', () => {
+  setRegisteredCardsSidebar(!els.registeredCardsSidebar.classList.contains('open'));
+});
+
+els.closeSidebarButton.addEventListener('click', () => setRegisteredCardsSidebar(false));
+els.sidebarBackdrop.addEventListener('click', () => setRegisteredCardsSidebar(false));
+
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && els.registeredCardsSidebar.classList.contains('open')) {
+    setRegisteredCardsSidebar(false);
+    els.registeredCardsButton.focus();
+  }
 });
 
 els.categoryList.addEventListener('click', async event => {

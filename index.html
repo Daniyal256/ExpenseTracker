@@ -7,9 +7,27 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=registered-cards-sidebar-3">
 </head>
 <body>
+  <button id="registeredCardsButton" class="registered-cards-button" type="button" aria-label="Registered cards" aria-controls="registeredCardsSidebar" aria-expanded="false">
+    <span class="menu-icon" aria-hidden="true"><i></i><i></i><i></i></span>
+    <span>Registered cards</span>
+    <strong id="registeredCardCount">0</strong>
+  </button>
+
+  <div id="sidebarBackdrop" class="sidebar-backdrop" hidden></div>
+  <aside id="registeredCardsSidebar" class="registered-cards-sidebar" aria-label="Cards registered on this device" aria-hidden="true">
+    <div class="sidebar-header">
+      <div class="section-title">
+        <span>Registered cards</span>
+        <small>Access saved on this device</small>
+      </div>
+      <button id="closeSidebarButton" class="sidebar-close-button" type="button" aria-label="Hide registered cards">&times;</button>
+    </div>
+    <div id="projectList" class="project-list sidebar-project-list"></div>
+  </aside>
+
   <main class="shell">
     <section class="hero-panel">
       <div>
@@ -84,7 +102,6 @@
         </div>
         <button id="leaveProjectButton" class="secondary-button" type="button">Leave card</button>
       </div>
-      <div id="projectList" class="project-list"></div>
     </section>
 
     <section class="workspace">
@@ -169,6 +186,6 @@
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="app.js"></script>
+  <script src="app.js?v=registered-cards-sidebar-3"></script>
 </body>
 </html>
