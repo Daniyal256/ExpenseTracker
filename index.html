@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ExpenseTracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="shell">
+    <section class="hero-panel">
+      <div>
+        <p class="eyebrow">Shared trip ledger</p>
+        <h1>ExpenseTracker</h1>
+        <p class="hero-copy">Plan a budget, group expenses into categories, and see who paid what without turning the trip chat into accounting class.</p>
+      </div>
+      <form id="budgetForm" class="budget-form" autocomplete="off">
+        <label>
+          <span>Trip name</span>
+          <input id="projectName" type="text" placeholder="Trip name" required>
+        </label>
+        <label>
+          <span>Total budget</span>
+          <input id="budgetInput" type="number" min="0" step="100" placeholder="0" required>
+        </label>
+        <button id="budgetButton" type="submit">Create expense</button>
+      </form>
+    </section>
+
+    <section class="metric-grid" aria-label="Budget overview">
+      <article class="metric-card">
+        <span>Budget</span>
+        <strong id="budgetTotal">Rs 0</strong>
+      </article>
+      <article class="metric-card">
+        <span>Spent</span>
+        <strong id="spentTotal">Rs 0</strong>
+      </article>
+      <article class="metric-card">
+        <span>Remaining</span>
+        <strong id="remainingTotal">Rs 0</strong>
+      </article>
+      <article class="metric-card">
+        <span>Members</span>
+        <strong id="memberCount">0</strong>
+      </article>
+    </section>
+
+    <section class="glass-card expense-switcher">
+      <div class="section-heading-row">
+        <div class="section-title">
+          <span>Expense cards</span>
+          <small>Create a new expense, then click a card to open its details</small>
+        </div>
+        <button id="newProjectButton" class="secondary-button" type="button">New expense</button>
+      </div>
+      <div id="projectList" class="project-list"></div>
+    </section>
+
+    <section class="workspace">
+      <aside class="control-stack">
+        <form id="memberForm" class="glass-card" autocomplete="off">
+          <div class="section-title">
+            <span>Add member</span>
+            <small>Who is on this trip?</small>
+          </div>
+          <label>
+            <span>Name</span>
+            <input id="memberName" type="text" placeholder="Member name" required>
+          </label>
+          <button type="submit">Add member</button>
+        </form>
+
+        <form id="categoryForm" class="glass-card" autocomplete="off">
+          <div class="section-title">
+            <span>Add category</span>
+            <small>Transport, food, stay...</small>
+          </div>
+          <label>
+            <span>Category</span>
+            <input id="categoryName" type="text" placeholder="Category name" required>
+          </label>
+          <button type="submit">Add category</button>
+        </form>
+
+        <form id="expenseForm" class="glass-card" autocomplete="off">
+          <div class="section-title">
+            <span>Add sub category</span>
+            <small>Amount, payer, method</small>
+          </div>
+          <label>
+            <span>Category</span>
+            <select id="expenseCategory" required></select>
+          </label>
+          <label>
+            <span>Sub category</span>
+            <input id="expenseName" type="text" placeholder="Sub category name" required>
+          </label>
+          <label>
+            <span>Amount</span>
+            <input id="expenseAmount" type="number" min="1" step="1" placeholder="0" required>
+          </label>
+          <label>
+            <span>Paid by</span>
+            <select id="expenseMember" required></select>
+          </label>
+          <div class="segmented" role="radiogroup" aria-label="Payment method">
+            <label>
+              <input type="radio" name="paymentMethod" value="cash" checked>
+              <span>Cash</span>
+            </label>
+            <label>
+              <input type="radio" name="paymentMethod" value="online">
+              <span>Online</span>
+            </label>
+          </div>
+          <button type="submit">Add expense</button>
+        </form>
+      </aside>
+
+      <section class="detail-stack">
+        <div class="glass-card category-board">
+          <div class="section-title">
+            <span>Categories</span>
+            <small>Click any row to view sub categories</small>
+          </div>
+          <div id="categoryList" class="category-list"></div>
+        </div>
+
+        <div class="glass-card summary-board">
+          <div class="section-title">
+            <span>Member summary</span>
+            <small>Total paid by each member</small>
+          </div>
+          <div id="summaryList" class="summary-list"></div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>
