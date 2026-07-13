@@ -31,6 +31,7 @@ const els = {
   shareModifierButton: document.querySelector('#shareModifierButton'),
   copyCodeButton: document.querySelector('#copyCodeButton'),
   copyModifierButton: document.querySelector('#copyModifierButton'),
+  modifierActions: document.querySelector('#modifierActions'),
   projectList: document.querySelector('#projectList'),
   memberForm: document.querySelector('#memberForm'),
   memberName: document.querySelector('#memberName'),
@@ -69,6 +70,13 @@ async function apiRequest(path, payload) {
 async function syncFromServer(projectId = activeProjectId) {
   try {
     const codes = getStoredCodes();
+    if (!codes.length && !projectId) {
+      state = { projects: [], project: null, members: [], categories: [], expenses: [] };
+      activeProjectId = null;
+      creatingNewProject = false;
+      render();
+      return;
+    }
     const params = new URLSearchParams();
     if (projectId) params.set('projectId', projectId);
     if (codes.length) params.set('codes', codes.join(','));

@@ -126,7 +126,7 @@ async function getState(requestPath = '/api/state') {
   const requestedProjectId = Number(requestedUrl.searchParams.get('projectId'));
   const knownCodes = getKnownCodesFromUrl(requestedUrl);
   const projects = await getProjects(db, knownCodes);
-  const projectId = Number.isInteger(requestedProjectId) && requestedProjectId > 0
+  const projectId = knownCodes.length && Number.isInteger(requestedProjectId) && requestedProjectId > 0
     && projects.some(project => Number(project.id) === requestedProjectId)
     ? requestedProjectId
     : projects[0]?.id;
