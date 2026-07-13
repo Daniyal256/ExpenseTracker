@@ -212,6 +212,12 @@ select:focus {
   align-items: center;
 }
 
+[hidden],
+.share-actions[hidden],
+.share-code-box [hidden] {
+  display: none !important;
+}
+
 .section-heading-row {
   display: flex;
   gap: 14px;

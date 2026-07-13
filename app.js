@@ -32,6 +32,7 @@ const els = {
   copyCodeButton: document.querySelector('#copyCodeButton'),
   copyModifierButton: document.querySelector('#copyModifierButton'),
   modifierActions: document.querySelector('#modifierActions'),
+  leaveProjectButton: document.querySelector('#leaveProjectButton'),
   projectList: document.querySelector('#projectList'),
   memberForm: document.querySelector('#memberForm'),
   memberName: document.querySelector('#memberName'),
@@ -110,8 +111,24 @@ function getStoredCodes() {
 
 function rememberCode(code) {
   if (!code) return;
-  const nextCodes = [code, ...getStoredCodes().filter(savedCode => savedCode !== code)].slice(0, 30);
+  const knownProjectCodes = [state.project?.viewerCode, state.project?.modifierCode].filter(Boolean);
+  const nextCodes = [
+    code,
+    ...getStoredCodes().filter(savedCode => savedCode !== code && !knownProjectCodes.includes(savedCode))
+  ].slice(0, 30);
   localStorage.setItem(codeStoreKey, JSON.stringify(nextCodes));
+}
+
+function forgetCurrentProject() {
+  const knownProjectCodes = [state.project?.viewerCode, state.project?.modifierCode].filter(Boolean);
+  if (!knownProjectCodes.length) return;
+  const nextCodes = getStoredCodes().filter(savedCode => !knownProjectCodes.includes(savedCode));
+  localStorage.setItem(codeStoreKey, JSON.stringify(nextCodes));
+  state = { projects: [], project: null, members: [], categories: [], expenses: [] };
+  activeProjectId = null;
+  creatingNewProject = false;
+  render();
+  syncFromServer();
 }
 
 function getActiveAccessCode() {
@@ -464,6 +481,11 @@ els.shareModifierButton.addEventListener('click', async () => {
       showToast(`Modifier code: ${code}`);
     }
   }
+});
+
+els.leaveProjectButton.addEventListener('click', () => {
+  forgetCurrentProject();
+  showToast('Expense card removed from this device.');
 });
 
 els.projectList.addEventListener('click', event => {
