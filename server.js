@@ -107,6 +107,11 @@ function cleanAccessCode(value) {
   return code.slice(0, 7);
 }
 
+function cleanClientId(value) {
+  const clientId = String(value || '').trim().replace(/[^A-Za-z0-9_-]/g, '');
+  return clientId ? clientId.slice(0, 64) : null;
+}
+
 function getKnownCodesFromUrl(requestedUrl) {
   const rawCodes = requestedUrl.searchParams.get('codes') || '';
   const singleCode = requestedUrl.searchParams.get('code') || '';
@@ -295,11 +300,24 @@ async function addMember(payload) {
   const projectId = cleanId(payload.projectId, 'Project');
   await requireModifierAccess(projectId, payload.accessCode);
   const name = cleanText(payload.name, 'Member name');
+  const clientId = cleanClientId(payload.clientId);
 
-  await db.query(
-    'INSERT INTO members (project_id, name) VALUES ($1, $2)',
-    [projectId, name]
+  if (clientId) {
+    const existing = await db.query(
+      'SELECT member_id AS id, project_id AS "projectId" FROM members WHERE client_id = $1',
+      [clientId]
+    );
+    if (existing.rows[0]) {
+      if (Number(existing.rows[0].projectId) !== projectId) throw new Error('Offline member ID belongs to another card.');
+      return { id: existing.rows[0].id };
+    }
+  }
+
+  const result = await db.query(
+    'INSERT INTO members (project_id, name, client_id) VALUES ($1, $2, $3) RETURNING member_id AS id',
+    [projectId, name, clientId]
   );
+  return { id: result.rows[0].id };
 }
 
 async function addCategory(payload) {
@@ -307,11 +325,24 @@ async function addCategory(payload) {
   const projectId = cleanId(payload.projectId, 'Project');
   await requireModifierAccess(projectId, payload.accessCode);
   const name = cleanText(payload.name, 'Category name');
+  const clientId = cleanClientId(payload.clientId);
 
-  await db.query(
-    'INSERT INTO categories (project_id, name) VALUES ($1, $2)',
-    [projectId, name]
+  if (clientId) {
+    const existing = await db.query(
+      'SELECT category_id AS id, project_id AS "projectId" FROM categories WHERE client_id = $1',
+      [clientId]
+    );
+    if (existing.rows[0]) {
+      if (Number(existing.rows[0].projectId) !== projectId) throw new Error('Offline category ID belongs to another card.');
+      return { id: existing.rows[0].id };
+    }
+  }
+
+  const result = await db.query(
+    'INSERT INTO categories (project_id, name, client_id) VALUES ($1, $2, $3) RETURNING category_id AS id',
+    [projectId, name, clientId]
   );
+  return { id: result.rows[0].id };
 }
 
 async function addExpense(payload) {
@@ -323,6 +354,7 @@ async function addExpense(payload) {
   const name = cleanText(payload.name, 'Sub category');
   const amount = cleanAmount(payload.amount, 'Amount');
   const paymentMethod = payload.paymentMethod === 'online' ? 'online' : 'cash';
+  const clientId = cleanClientId(payload.clientId);
 
   const validation = await db.query(`
     SELECT
@@ -338,10 +370,25 @@ async function addExpense(payload) {
     throw new Error('Selected category or member does not belong to this trip.');
   }
 
-  await db.query(`
-    INSERT INTO expense_items (category_id, member_id, name, amount, payment_method)
-    VALUES ($1, $2, $3, $4, $5)
-  `, [categoryId, memberId, name, amount, paymentMethod]);
+  if (clientId) {
+    const existing = await db.query(`
+      SELECT e.expense_item_id AS id, c.project_id AS "projectId"
+      FROM expense_items e
+      INNER JOIN categories c ON c.category_id = e.category_id
+      WHERE e.client_id = $1
+    `, [clientId]);
+    if (existing.rows[0]) {
+      if (Number(existing.rows[0].projectId) !== projectId) throw new Error('Offline expense ID belongs to another card.');
+      return { id: existing.rows[0].id };
+    }
+  }
+
+  const result = await db.query(`
+    INSERT INTO expense_items (category_id, member_id, name, amount, payment_method, client_id)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING expense_item_id AS id
+  `, [categoryId, memberId, name, amount, paymentMethod, clientId]);
+  return { id: result.rows[0].id };
 }
 
 async function updateCategory(payload) {
@@ -370,7 +417,7 @@ async function deleteCategory(payload) {
     [projectId, categoryId]
   );
 
-  if (!result.rowCount) throw new Error('Category was not found.');
+  // A repeated offline delete is already in the desired state.
 }
 
 async function deleteExpense(payload) {
@@ -387,7 +434,7 @@ async function deleteExpense(payload) {
       AND e.expense_item_id = $2
   `, [projectId, expenseId]);
 
-  if (!result.rowCount) throw new Error('Expense was not found.');
+  // A repeated offline delete is already in the desired state.
 }
 
 async function deleteProject(payload) {
@@ -415,13 +462,14 @@ async function handleApi(req, res) {
     if (req.method === 'POST') {
       const payload = await readBody(req);
       let selectedProjectId = payload.projectId;
+      let mutationResult = null;
       if (route === '/api/budget') selectedProjectId = await updateBudget(payload);
       else if (route === '/api/join') selectedProjectId = await joinProject(payload);
-      else if (route === '/api/members') await addMember(payload);
-      else if (route === '/api/categories') await addCategory(payload);
+      else if (route === '/api/members') mutationResult = await addMember(payload);
+      else if (route === '/api/categories') mutationResult = await addCategory(payload);
       else if (route === '/api/categories/update') await updateCategory(payload);
       else if (route === '/api/categories/delete') await deleteCategory(payload);
-      else if (route === '/api/expenses') await addExpense(payload);
+      else if (route === '/api/expenses') mutationResult = await addExpense(payload);
       else if (route === '/api/expenses/delete') await deleteExpense(payload);
       else if (route === '/api/projects/delete') {
         await deleteProject(payload);
@@ -446,7 +494,8 @@ async function handleApi(req, res) {
         : await getAccessCodeByProjectId(selectedProjectId, payload.accessCode);
       if (selectedShareCode) stateParams.set('code', selectedShareCode);
       const statePath = `/api/state${stateParams.toString() ? `?${stateParams}` : ''}`;
-      sendJson(res, 200, await getState(statePath));
+      const responseState = await getState(statePath);
+      sendJson(res, 200, mutationResult ? { ...responseState, mutationResult } : responseState);
       return;
     }
 
@@ -471,7 +520,9 @@ function serveStatic(req, res) {
     '.html': 'text/html; charset=utf-8',
     '.css': 'text/css; charset=utf-8',
     '.js': 'application/javascript; charset=utf-8',
-    '.json': 'application/json; charset=utf-8'
+    '.json': 'application/json; charset=utf-8',
+    '.webmanifest': 'application/manifest+json; charset=utf-8',
+    '.svg': 'image/svg+xml'
   };
 
   fs.readFile(filePath, (error, content) => {
@@ -481,7 +532,10 @@ function serveStatic(req, res) {
       return;
     }
 
-    res.writeHead(200, { 'Content-Type': contentTypes[ext] || 'application/octet-stream' });
+    res.writeHead(200, {
+      'Content-Type': contentTypes[ext] || 'application/octet-stream',
+      'Cache-Control': filePath.endsWith('service-worker.js') ? 'no-cache' : 'public, max-age=300'
+    });
     res.end(content);
   });
 }

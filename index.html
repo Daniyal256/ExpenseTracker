@@ -3,11 +3,15 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#22745a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
   <title>ExpenseTracker</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=registered-cards-sidebar-3">
+  <link rel="stylesheet" href="style.css?v=offline-v1">
 </head>
 <body>
   <button id="registeredCardsButton" class="registered-cards-button" type="button" aria-label="Registered cards" aria-controls="registeredCardsSidebar" aria-expanded="false">
@@ -15,6 +19,7 @@
     <span>Registered cards</span>
     <strong id="registeredCardCount">0</strong>
   </button>
+  <div id="connectionStatus" class="connection-status" role="status" aria-live="polite">Online</div>
 
   <div id="sidebarBackdrop" class="sidebar-backdrop" hidden></div>
   <aside id="registeredCardsSidebar" class="registered-cards-sidebar" aria-label="Cards registered on this device" aria-hidden="true">
@@ -186,6 +191,6 @@
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="app.js?v=registered-cards-sidebar-3"></script>
+  <script src="app.js?v=offline-v1"></script>
 </body>
 </html>

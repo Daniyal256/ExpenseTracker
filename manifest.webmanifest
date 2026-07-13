@@ -1,0 +1,17 @@
+{
+  "name": "ExpenseTracker",
+  "short_name": "Expenses",
+  "description": "Offline-ready shared trip expense tracker",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#eef4ed",
+  "theme_color": "#22745a",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

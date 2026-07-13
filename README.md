@@ -17,6 +17,20 @@ ExpenseTracker is a trip and group expense tracker built with HTML, CSS, JavaScr
 - Click a category to expand its sub category details.
 - See a final summary of how much each member spent.
 - Starts empty, then saves your real trip data to PostgreSQL.
+- Opens registered cards without signal after they have been opened online once.
+- Queues offline edits on the device and syncs them to PostgreSQL when signal returns.
+
+## Offline Use on a Trip
+
+Before leaving an area with signal:
+
+1. Open the Railway URL on the phone you will use.
+2. Join or create the expense card and open it at least once.
+3. Optionally use the browser menu to install **ExpenseTracker** on the home screen.
+
+After that, the same Railway URL or installed home-screen app can open without signal. Existing registered cards, members, categories, totals, and expenses are loaded from the device. Changes show an **Offline** status and remain queued on that phone. When the browser detects signal again, it sends the queued changes to PostgreSQL in their original order.
+
+Creating a brand-new card and joining a card for the first time still require signal because the server must issue or verify its access code. Do not clear the browser's site data, because that removes the offline copy and its unsynced queue.
 
 ## Local Setup
 

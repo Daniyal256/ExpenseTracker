@@ -55,7 +55,14 @@ CREATE TABLE IF NOT EXISTS expense_items (
     paid_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE members ADD COLUMN IF NOT EXISTS client_id VARCHAR(64);
+ALTER TABLE categories ADD COLUMN IF NOT EXISTS client_id VARCHAR(64);
+ALTER TABLE expense_items ADD COLUMN IF NOT EXISTS client_id VARCHAR(64);
+
 CREATE INDEX IF NOT EXISTS ix_members_project_id ON members(project_id);
 CREATE INDEX IF NOT EXISTS ix_categories_project_id ON categories(project_id);
 CREATE INDEX IF NOT EXISTS ix_expense_items_category_id ON expense_items(category_id);
 CREATE INDEX IF NOT EXISTS ix_expense_items_member_id ON expense_items(member_id);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_members_client_id ON members(client_id);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_categories_client_id ON categories(client_id);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_expense_items_client_id ON expense_items(client_id);

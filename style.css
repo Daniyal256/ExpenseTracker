@@ -43,6 +43,33 @@ body.sidebar-open {
   box-shadow: 0 14px 34px rgba(34, 56, 43, 0.2);
 }
 
+.connection-status {
+  position: fixed;
+  z-index: 40;
+  top: 24px;
+  right: 20px;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid rgba(34, 116, 90, 0.18);
+  border-radius: 999px;
+  color: var(--green);
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: 0 10px 28px rgba(34, 56, 43, 0.12);
+  font-size: 0.78rem;
+  font-weight: 800;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.connection-status.offline {
+  color: #8d2e24;
+  border-color: rgba(200, 105, 75, 0.24);
+  background: rgba(255, 238, 231, 0.9);
+}
+
+.connection-status.syncing {
+  color: var(--blue);
+}
+
 .registered-cards-button strong {
   display: grid;
   min-width: 24px;
@@ -693,6 +720,11 @@ form.is-disabled select {
 
   .registered-cards-button > span:not(.menu-icon) {
     display: none;
+  }
+
+  .connection-status {
+    top: 15px;
+    right: 12px;
   }
 
   .shell {

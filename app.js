@@ -7,6 +7,11 @@ const formatter = new Intl.NumberFormat('en-PK', {
 let activeProjectId = null;
 let creatingNewProject = false;
 const codeStoreKey = 'expenseTrackerCodes';
+const offlineStateKey = 'expenseTrackerOfflineState';
+const offlineQueueKey = 'expenseTrackerOfflineQueue';
+const offlineIdMapKey = 'expenseTrackerOfflineIdMap';
+let offlineSyncing = false;
+let tempIdCounter = 0;
 let state = {
   projects: [],
   project: null,
@@ -34,6 +39,7 @@ const els = {
   modifierActions: document.querySelector('#modifierActions'),
   deleteProjectButton: document.querySelector('#deleteProjectButton'),
   leaveProjectButton: document.querySelector('#leaveProjectButton'),
+  connectionStatus: document.querySelector('#connectionStatus'),
   registeredCardsButton: document.querySelector('#registeredCardsButton'),
   registeredCardsSidebar: document.querySelector('#registeredCardsSidebar'),
   registeredCardCount: document.querySelector('#registeredCardCount'),
@@ -58,6 +64,65 @@ const els = {
   toast: document.querySelector('#toast')
 };
 
+function readStoredJson(key, fallback) {
+  try {
+    return JSON.parse(localStorage.getItem(key) || '') || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStoredJson(key, value) {
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+function makeClientId() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function makeTempId() {
+  tempIdCounter += 1;
+  return -(Date.now() * 1000 + tempIdCounter);
+}
+
+function getOfflineQueue() {
+  const queue = readStoredJson(offlineQueueKey, []);
+  return Array.isArray(queue) ? queue : [];
+}
+
+function updateConnectionStatus(mode = navigator.onLine ? 'online' : 'offline') {
+  const pending = getOfflineQueue().length;
+  els.connectionStatus.classList.toggle('offline', mode === 'offline');
+  els.connectionStatus.classList.toggle('syncing', mode === 'syncing');
+
+  if (mode === 'syncing') els.connectionStatus.textContent = `Syncing ${pending}`;
+  else if (mode === 'offline') els.connectionStatus.textContent = pending ? `Offline · ${pending} saved` : 'Offline';
+  else els.connectionStatus.textContent = pending ? `Online · ${pending} pending` : 'Online';
+}
+
+function cacheState(nextState = state) {
+  writeStoredJson(offlineStateKey, nextState);
+  const projectId = nextState.project?.id;
+  if (projectId) writeStoredJson(`${offlineStateKey}:${projectId}`, nextState);
+}
+
+function getCachedState(projectId) {
+  if (projectId) {
+    const projectState = readStoredJson(`${offlineStateKey}:${projectId}`, null);
+    return projectState?.project ? projectState : null;
+  }
+  return readStoredJson(offlineStateKey, null);
+}
+
+function mergeRegisteredProjects(nextState, previousState = state) {
+  const mergedProjects = [...(nextState.projects || [])];
+  for (const project of previousState.projects || []) {
+    if (!mergedProjects.some(item => Number(item.id) === Number(project.id))) mergedProjects.push(project);
+  }
+  return { ...nextState, projects: mergedProjects };
+}
+
 async function apiRequest(path, payload) {
   const response = await fetch(path, {
     method: payload ? 'POST' : 'GET',
@@ -75,6 +140,14 @@ async function apiRequest(path, payload) {
 }
 
 async function syncFromServer(projectId = activeProjectId) {
+  const cached = getCachedState(projectId);
+  if (cached) {
+    state = cached;
+    activeProjectId = state.project?.id || null;
+    creatingNewProject = false;
+    render();
+  }
+
   try {
     const codes = getStoredCodes();
     if (!codes.length) {
@@ -84,6 +157,15 @@ async function syncFromServer(projectId = activeProjectId) {
       render();
       return;
     }
+    if (!navigator.onLine) {
+      updateConnectionStatus('offline');
+      if (!cached) showToast('Open this card once with signal before using it offline.');
+      return;
+    }
+    if (getOfflineQueue().length) {
+      await flushOfflineQueue();
+      return;
+    }
     const params = new URLSearchParams();
     if (projectId) params.set('projectId', projectId);
     if (codes.length) params.set('codes', codes.join(','));
@@ -91,19 +173,158 @@ async function syncFromServer(projectId = activeProjectId) {
     state = await apiRequest(path);
     activeProjectId = state.project?.id || null;
     creatingNewProject = false;
+    cacheState();
+    updateConnectionStatus('online');
     render();
   } catch (error) {
     render();
-    showToast(`Database is not connected: ${error.message}`);
+    updateConnectionStatus(navigator.onLine ? 'online' : 'offline');
+    showToast(cached ? 'Showing the last saved offline copy.' : `Could not load expenses: ${error.message}`);
+  }
+}
+
+function prepareMutation(path, payload) {
+  const operation = {
+    operationId: makeClientId(),
+    path,
+    payload: { ...payload },
+    tempId: null
+  };
+
+  if (['/api/members', '/api/categories', '/api/expenses'].includes(path)) {
+    operation.payload.clientId = operation.operationId;
+    operation.tempId = makeTempId();
+  }
+  return operation;
+}
+
+function applyOptimisticMutation(operation) {
+  const payload = operation.payload;
+
+  if (operation.path === '/api/budget') {
+    state.project = { ...state.project, name: payload.name, budget: payload.budget };
+    state.projects = state.projects.map(project => Number(project.id) === Number(payload.projectId)
+      ? { ...project, name: payload.name, budget: payload.budget }
+      : project);
+  } else if (operation.path === '/api/members') {
+    state.members.push({ id: operation.tempId, name: payload.name, clientId: payload.clientId });
+  } else if (operation.path === '/api/categories') {
+    state.categories.push({ id: operation.tempId, name: payload.name, clientId: payload.clientId });
+  } else if (operation.path === '/api/expenses') {
+    state.expenses.push({
+      id: operation.tempId,
+      categoryId: payload.categoryId,
+      memberId: payload.memberId,
+      name: payload.name,
+      amount: payload.amount,
+      paymentMethod: payload.paymentMethod,
+      clientId: payload.clientId
+    });
+  } else if (operation.path === '/api/categories/update') {
+    state.categories = state.categories.map(category => Number(category.id) === Number(payload.categoryId)
+      ? { ...category, name: payload.name }
+      : category);
+  } else if (operation.path === '/api/categories/delete') {
+    state.categories = state.categories.filter(category => Number(category.id) !== Number(payload.categoryId));
+    state.expenses = state.expenses.filter(expense => Number(expense.categoryId) !== Number(payload.categoryId));
+  } else if (operation.path === '/api/expenses/delete') {
+    state.expenses = state.expenses.filter(expense => Number(expense.id) !== Number(payload.expenseId));
+  }
+}
+
+function queueOfflineMutation(operation) {
+  if (operation.path === '/api/join') throw new Error('Joining a new card needs a signal. Registered cards still open offline.');
+  if (operation.path === '/api/budget' && !operation.payload.projectId) {
+    throw new Error('Creating a new card needs a signal. You can edit registered cards offline.');
+  }
+
+  const queue = getOfflineQueue();
+  queue.push(operation);
+  writeStoredJson(offlineQueueKey, queue);
+  applyOptimisticMutation(operation);
+  cacheState();
+  updateConnectionStatus('offline');
+  render();
+}
+
+function resolveOfflinePayload(payload, idMap) {
+  const resolved = { ...payload };
+  for (const key of ['categoryId', 'memberId', 'expenseId']) {
+    if (resolved[key] != null && idMap[String(resolved[key])] != null) resolved[key] = idMap[String(resolved[key])];
+  }
+  return resolved;
+}
+
+async function flushOfflineQueue() {
+  if (offlineSyncing || !navigator.onLine) return false;
+  let queue = getOfflineQueue();
+  if (!queue.length) {
+    updateConnectionStatus('online');
+    return true;
+  }
+
+  offlineSyncing = true;
+  updateConnectionStatus('syncing');
+  const idMap = readStoredJson(offlineIdMapKey, {});
+  const selectedProjectId = activeProjectId;
+
+  try {
+    while (queue.length) {
+      const operation = queue[0];
+      const responseState = await apiRequest(operation.path, resolveOfflinePayload(operation.payload, idMap));
+      if (operation.tempId != null && responseState.mutationResult?.id != null) {
+        idMap[String(operation.tempId)] = responseState.mutationResult.id;
+        writeStoredJson(offlineIdMapKey, idMap);
+      }
+      queue.shift();
+      writeStoredJson(offlineQueueKey, queue);
+    }
+
+    const codes = getStoredCodes();
+    const params = new URLSearchParams();
+    if (selectedProjectId) params.set('projectId', selectedProjectId);
+    if (codes.length) params.set('codes', codes.join(','));
+    state = await apiRequest(`/api/state?${params}`);
+    activeProjectId = state.project?.id || null;
+    localStorage.removeItem(offlineIdMapKey);
+    cacheState();
+    render();
+    updateConnectionStatus('online');
+    showToast('Offline changes synced to the database.');
+    return true;
+  } catch (error) {
+    updateConnectionStatus(navigator.onLine ? 'online' : 'offline');
+    showToast(`Offline changes are still saved. Sync paused: ${error.message}`);
+    return false;
+  } finally {
+    offlineSyncing = false;
   }
 }
 
 async function mutate(path, payload) {
-  state = await apiRequest(path, payload);
-  activeProjectId = state.project?.id || null;
-  rememberCode(state.project?.modifierCode || state.project?.viewerCode);
-  creatingNewProject = false;
-  render();
+  const operation = prepareMutation(path, payload);
+  if (!navigator.onLine) {
+    queueOfflineMutation(operation);
+    return true;
+  }
+
+  try {
+    const nextState = await apiRequest(path, operation.payload);
+    state = mergeRegisteredProjects(nextState);
+    activeProjectId = state.project?.id || null;
+    rememberCode(state.project?.modifierCode || state.project?.viewerCode);
+    creatingNewProject = false;
+    cacheState();
+    updateConnectionStatus('online');
+    render();
+    return false;
+  } catch (error) {
+    if (error instanceof TypeError || !navigator.onLine) {
+      queueOfflineMutation(operation);
+      return true;
+    }
+    throw error;
+  }
 }
 
 function getStoredCodes() {
@@ -131,6 +352,7 @@ function forgetCurrentProject() {
   if (!knownProjectCodes.length) return;
   const nextCodes = getStoredCodes().filter(savedCode => !knownProjectCodes.includes(savedCode));
   localStorage.setItem(codeStoreKey, JSON.stringify(nextCodes));
+  if (forgottenProjectId) localStorage.removeItem(`${offlineStateKey}:${forgottenProjectId}`);
   state = {
     projects: state.projects.filter(project => Number(project.id) !== Number(forgottenProjectId)),
     project: null,
@@ -143,6 +365,7 @@ function forgetCurrentProject() {
   els.projectName.value = '';
   els.budgetInput.value = '';
   els.joinForm.reset();
+  cacheState();
   render();
 }
 
@@ -159,6 +382,7 @@ function leaveCurrentProject() {
   els.projectName.value = '';
   els.budgetInput.value = '';
   els.joinForm.reset();
+  cacheState();
   render();
 }
 
@@ -399,33 +623,33 @@ async function handleCategoryAction(action, categoryId, categoryName) {
   if (action === 'edit-category') {
     const nextName = window.prompt('Rename category', categoryName || '');
     if (!nextName || !nextName.trim()) return;
-    await mutate('/api/categories/update', {
+    const queued = await mutate('/api/categories/update', {
       ...activeProjectPayload(),
       categoryId,
       name: nextName.trim()
     });
-    showToast('Category updated.');
+    showToast(queued ? 'Category saved offline and waiting to sync.' : 'Category updated.');
   }
 
   if (action === 'delete-category') {
     const ok = window.confirm('Delete this category and all expenses inside it?');
     if (!ok) return;
-    await mutate('/api/categories/delete', {
+    const queued = await mutate('/api/categories/delete', {
       ...activeProjectPayload(),
       categoryId
     });
-    showToast('Category deleted.');
+    showToast(queued ? 'Deletion saved offline and waiting to sync.' : 'Category deleted.');
   }
 }
 
 async function handleExpenseAction(expenseId) {
   const ok = window.confirm('Delete this expense item?');
   if (!ok) return;
-  await mutate('/api/expenses/delete', {
+  const queued = await mutate('/api/expenses/delete', {
     ...activeProjectPayload(),
     expenseId
   });
-  showToast('Expense deleted.');
+  showToast(queued ? 'Deletion saved offline and waiting to sync.' : 'Expense deleted.');
 }
 
 function escapeHtml(value) {
@@ -598,8 +822,8 @@ els.budgetForm.addEventListener('submit', async event => {
   };
 
   try {
-    await mutate('/api/budget', payload);
-    showToast(payload.projectId ? 'Expense card saved.' : 'Expense card created.');
+    const queued = await mutate('/api/budget', payload);
+    showToast(queued ? 'Card changes saved offline and waiting to sync.' : payload.projectId ? 'Expense card saved.' : 'Expense card created.');
   } catch (error) {
     showToast(`Could not save expense card: ${error.message}`);
   }
@@ -611,8 +835,9 @@ els.memberForm.addEventListener('submit', async event => {
   if (!payload.name) return;
 
   try {
-    await mutate('/api/members', payload);
+    const queued = await mutate('/api/members', payload);
     els.memberForm.reset();
+    if (queued) showToast('Member saved offline and waiting to sync.');
   } catch (error) {
     showToast(`Could not add member: ${error.message}`);
   }
@@ -624,8 +849,9 @@ els.categoryForm.addEventListener('submit', async event => {
   if (!payload.name) return;
 
   try {
-    await mutate('/api/categories', payload);
+    const queued = await mutate('/api/categories', payload);
     els.categoryForm.reset();
+    if (queued) showToast('Category saved offline and waiting to sync.');
   } catch (error) {
     showToast(`Could not add category: ${error.message}`);
   }
@@ -644,12 +870,33 @@ els.expenseForm.addEventListener('submit', async event => {
   };
 
   try {
-    await mutate('/api/expenses', payload);
+    const queued = await mutate('/api/expenses', payload);
     els.expenseName.value = '';
     els.expenseAmount.value = '';
+    if (queued) showToast('Expense saved offline and waiting to sync.');
   } catch (error) {
     showToast(`Could not add expense: ${error.message}`);
   }
 });
 
+window.addEventListener('offline', () => {
+  updateConnectionStatus('offline');
+  showToast('You are offline. Changes will stay on this device until signal returns.');
+});
+
+window.addEventListener('online', async () => {
+  updateConnectionStatus('syncing');
+  await flushOfflineQueue();
+  if (!getOfflineQueue().length) await syncFromServer();
+});
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/service-worker.js').catch(() => {
+      showToast('Offline app files could not be installed on this device.');
+    });
+  });
+}
+
+updateConnectionStatus();
 syncFromServer();
