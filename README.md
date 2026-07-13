@@ -1,6 +1,6 @@
 # ExpenseTracker
 
-ExpenseTracker is a simple trip and group expense tracker built with HTML, CSS, JavaScript, Node.js, and SQL Server.
+ExpenseTracker is a trip and group expense tracker built with HTML, CSS, JavaScript, Node.js, and PostgreSQL.
 
 ## Features
 
@@ -14,10 +14,9 @@ ExpenseTracker is a simple trip and group expense tracker built with HTML, CSS, 
 - View total budget, total spent, remaining amount, and member count.
 - Click a category to expand its sub category details.
 - See a final summary of how much each member spent.
-- Uses SQL Server through the Node API.
-- Starts empty, then saves your real trip data to the database.
+- Starts empty, then saves your real trip data to PostgreSQL.
 
-## Setup
+## Local Setup
 
 1. Install dependencies:
 
@@ -25,45 +24,70 @@ ExpenseTracker is a simple trip and group expense tracker built with HTML, CSS, 
    npm install
    ```
 
-2. Create the SQL Server database by running [database/schema.sql](/Users/mac/Documents/4th_Semester/Projects/ExpenseTracker/database/schema.sql) in SQL Server Management Studio or Azure Data Studio.
+2. Create a PostgreSQL database.
 
-   The schema does not insert sample trips, members, categories, or expenses.
+3. Run [database/schema.sql](/Users/mac/Documents/4th_Semester/Projects/ExpenseTracker/database/schema.sql) in your PostgreSQL query editor.
 
-3. Copy `.env.example` to `.env`, then edit the SQL Server values.
-
-   On macOS/Linux:
+4. Copy `.env.example` to `.env`, then edit `DATABASE_URL`.
 
    ```bash
    cp .env.example .env
    ```
 
-4. Start the project:
+5. Start the project:
 
    ```bash
    npm start
    ```
 
-5. Open:
+6. Open:
 
    ```text
    http://localhost:3000
    ```
 
-## Database Tables
+## Railway Deployment
 
-- `Projects`: trip name and budget.
-- `Members`: people participating in the trip.
-- `Categories`: main expense groups.
-- `ExpenseItems`: sub category expenses with amount, payment method, and payer.
-
-## Deployment Notes
-
-Deploy the Node.js app to a service that can run a persistent server process, such as Azure App Service, Render, Railway, or a VPS. Configure the same environment variables from `.env.example` in the host dashboard and point them to a reachable SQL Server or Azure SQL database.
-
-For most hosting platforms, set:
+Use this setup so your laptop does not need to stay on:
 
 ```text
-HOST=0.0.0.0
+Samsung phone -> Railway app -> Railway PostgreSQL
 ```
 
-Keep `HOST=127.0.0.1` for local development.
+1. In Railway, add a PostgreSQL database to the same project.
+
+2. Open the PostgreSQL database service and copy its public or internal `DATABASE_URL`.
+
+3. Open the ExpenseTracker web service -> Variables.
+
+4. Delete old SQL Server variables if Railway suggested them:
+
+   ```text
+   DB_USER
+   DB_PASSWORD
+   DB_SERVER
+   DB_DATABASE
+   DB_PORT
+   DB_ENCRYPT
+   DB_TRUST_SERVER_CERTIFICATE
+   ```
+
+5. Add these variables:
+
+   ```env
+   HOST=0.0.0.0
+   DATABASE_URL=${{Postgres.DATABASE_URL}}
+   ```
+
+   If your PostgreSQL service has a different name, use that service name in the reference variable.
+
+6. Redeploy the ExpenseTracker service. The app runs [database/schema.sql](/Users/mac/Documents/4th_Semester/Projects/ExpenseTracker/database/schema.sql) automatically when it first connects to PostgreSQL.
+
+7. Open the Railway public domain on your phone.
+
+## Database Tables
+
+- `projects`: trip name and budget.
+- `members`: people participating in the trip.
+- `categories`: main expense groups.
+- `expense_items`: sub category expenses with amount, payment method, and payer.

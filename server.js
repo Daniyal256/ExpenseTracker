@@ -1,13 +1,16 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { Pool } = require('pg');
 
 loadEnvFile();
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
 const PUBLIC_DIR = __dirname;
-let sql;
+
+let pool;
+let schemaReady;
 
 function loadEnvFile() {
   const envPath = path.join(__dirname, '.env');
@@ -26,42 +29,29 @@ function loadEnvFile() {
   }
 }
 
-const normalizedDbServer = normalizeDbServer(process.env.DB_SERVER || 'localhost');
-
-const dbConfig = {
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  server: normalizedDbServer.server,
-  database: process.env.DB_DATABASE || 'ExpenseTracker',
-  port: process.env.DB_INSTANCE || normalizedDbServer.instanceName ? undefined : Number(process.env.DB_PORT || 1433),
-  options: {
-    encrypt: String(process.env.DB_ENCRYPT || 'false') === 'true',
-    trustServerCertificate: String(process.env.DB_TRUST_SERVER_CERTIFICATE || 'true') === 'true',
-    instanceName: process.env.DB_INSTANCE || normalizedDbServer.instanceName
+function getPool() {
+  if (!process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL is missing. Add a PostgreSQL database on Railway and attach its DATABASE_URL variable.');
   }
-};
 
-let poolPromise;
+  if (!pool) {
+    pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false }
+    });
+  }
 
-function normalizeDbServer(serverValue) {
-  const [server, instanceName] = String(serverValue).split('\\');
-  return { server, instanceName };
+  return pool;
 }
 
-function getPool() {
-  if (!process.env.DB_USER || !process.env.DB_PASSWORD) {
-    throw new Error('Database credentials are missing. Copy .env.example values into your environment.');
+async function getReadyPool() {
+  const db = getPool();
+  if (!schemaReady) {
+    const schemaSql = fs.readFileSync(path.join(__dirname, 'database', 'schema.sql'), 'utf8');
+    schemaReady = db.query(schemaSql);
   }
-
-  if (!sql) {
-    sql = require('mssql');
-  }
-
-  if (!poolPromise) {
-    poolPromise = sql.connect(dbConfig);
-  }
-
-  return poolPromise;
+  await schemaReady;
+  return db;
 }
 
 function sendJson(res, statusCode, payload) {
@@ -105,11 +95,17 @@ function cleanAmount(value, fieldName) {
   return amount;
 }
 
+function cleanId(value, fieldName) {
+  const id = Number(value);
+  if (!Number.isInteger(id) || id <= 0) throw new Error(`${fieldName} is required.`);
+  return id;
+}
+
 async function getState(requestPath = '/api/state') {
-  const pool = await getPool();
+  const db = await getReadyPool();
   const requestedUrl = new URL(requestPath, `http://${HOST}:${PORT}`);
   const requestedProjectId = Number(requestedUrl.searchParams.get('projectId'));
-  const projects = await getProjects(pool);
+  const projects = await getProjects(db);
   const projectId = Number.isInteger(requestedProjectId) && requestedProjectId > 0
     ? requestedProjectId
     : projects[0]?.id;
@@ -125,198 +121,172 @@ async function getState(requestPath = '/api/state') {
   }
 
   const [projectResult, memberResult, categoryResult, itemResult] = await Promise.all([
-    pool.request()
-      .input('projectId', sql.Int, projectId)
-      .query('SELECT ProjectId AS id, Name AS name, Budget AS budget FROM dbo.Projects WHERE ProjectId = @projectId'),
-    pool.request()
-      .input('projectId', sql.Int, projectId)
-      .query('SELECT MemberId AS id, Name AS name FROM dbo.Members WHERE ProjectId = @projectId ORDER BY MemberId'),
-    pool.request()
-      .input('projectId', sql.Int, projectId)
-      .query('SELECT CategoryId AS id, Name AS name FROM dbo.Categories WHERE ProjectId = @projectId ORDER BY CategoryId'),
-    pool.request()
-      .input('projectId', sql.Int, projectId)
-      .query(`
-        SELECT e.ExpenseItemId AS id,
-               e.CategoryId AS categoryId,
-               e.MemberId AS memberId,
-               e.Name AS name,
-               e.Amount AS amount,
-               e.PaymentMethod AS paymentMethod
-        FROM dbo.ExpenseItems e
-        INNER JOIN dbo.Categories c ON c.CategoryId = e.CategoryId
-        WHERE c.ProjectId = @projectId
-        ORDER BY e.ExpenseItemId
-      `)
+    db.query(
+      'SELECT project_id AS id, name, budget FROM projects WHERE project_id = $1',
+      [projectId]
+    ),
+    db.query(
+      'SELECT member_id AS id, name FROM members WHERE project_id = $1 ORDER BY member_id',
+      [projectId]
+    ),
+    db.query(
+      'SELECT category_id AS id, name FROM categories WHERE project_id = $1 ORDER BY category_id',
+      [projectId]
+    ),
+    db.query(`
+      SELECT e.expense_item_id AS id,
+             e.category_id AS "categoryId",
+             e.member_id AS "memberId",
+             e.name,
+             e.amount,
+             e.payment_method AS "paymentMethod"
+      FROM expense_items e
+      INNER JOIN categories c ON c.category_id = e.category_id
+      WHERE c.project_id = $1
+      ORDER BY e.expense_item_id
+    `, [projectId])
   ]);
 
   return {
     projects,
-    project: projectResult.recordset[0] || null,
-    members: memberResult.recordset,
-    categories: categoryResult.recordset,
-    expenses: itemResult.recordset
+    project: projectResult.rows[0] || null,
+    members: memberResult.rows,
+    categories: categoryResult.rows,
+    expenses: itemResult.rows
   };
 }
 
-async function getProjects(pool) {
-  const result = await pool.request().query(`
-    SELECT p.ProjectId AS id,
-           p.Name AS name,
-           p.Budget AS budget,
-           COALESCE(SUM(e.Amount), 0) AS spent,
-           COUNT(e.ExpenseItemId) AS itemCount
-    FROM dbo.Projects p
-    LEFT JOIN dbo.Categories c ON c.ProjectId = p.ProjectId
-    LEFT JOIN dbo.ExpenseItems e ON e.CategoryId = c.CategoryId
-    GROUP BY p.ProjectId, p.Name, p.Budget, p.CreatedAt
-    ORDER BY p.CreatedAt DESC, p.ProjectId DESC
+async function getProjects(db) {
+  const result = await db.query(`
+    SELECT p.project_id AS id,
+           p.name,
+           p.budget,
+           COALESCE(SUM(e.amount), 0) AS spent,
+           COUNT(e.expense_item_id)::int AS "itemCount"
+    FROM projects p
+    LEFT JOIN categories c ON c.project_id = p.project_id
+    LEFT JOIN expense_items e ON e.category_id = c.category_id
+    GROUP BY p.project_id, p.name, p.budget, p.created_at
+    ORDER BY p.created_at DESC, p.project_id DESC
   `);
 
-  return result.recordset;
+  return result.rows;
 }
 
 async function updateBudget(payload) {
-  const pool = await getPool();
+  const db = await getReadyPool();
   const name = cleanText(payload.name, 'Project name');
   const budget = cleanAmount(payload.budget, 'Budget');
   const projectId = Number(payload.projectId);
 
-  const request = pool.request()
-    .input('name', sql.NVarChar(120), name)
-    .input('budget', sql.Decimal(12, 2), budget);
-
   if (Number.isInteger(projectId) && projectId > 0) {
-    await request
-      .input('projectId', sql.Int, projectId)
-      .query('UPDATE dbo.Projects SET Name = @name, Budget = @budget WHERE ProjectId = @projectId');
+    const result = await db.query(
+      'UPDATE projects SET name = $1, budget = $2 WHERE project_id = $3',
+      [name, budget, projectId]
+    );
+    if (!result.rowCount) throw new Error('Expense card was not found.');
     return projectId;
   }
 
-  const result = await request.query(`
-    INSERT INTO dbo.Projects (Name, Budget)
-    OUTPUT INSERTED.ProjectId AS id
-    VALUES (@name, @budget)
-  `);
-  return result.recordset[0].id;
+  const result = await db.query(
+    'INSERT INTO projects (name, budget) VALUES ($1, $2) RETURNING project_id AS id',
+    [name, budget]
+  );
+  return result.rows[0].id;
 }
 
 async function addMember(payload) {
-  const pool = await getPool();
-  const name = cleanText(payload.name, 'Member name');
+  const db = await getReadyPool();
   const projectId = cleanId(payload.projectId, 'Project');
+  const name = cleanText(payload.name, 'Member name');
 
-  await pool.request()
-    .input('projectId', sql.Int, projectId)
-    .input('name', sql.NVarChar(120), name)
-    .query('INSERT INTO dbo.Members (ProjectId, Name) VALUES (@projectId, @name)');
+  await db.query(
+    'INSERT INTO members (project_id, name) VALUES ($1, $2)',
+    [projectId, name]
+  );
 }
 
 async function addCategory(payload) {
-  const pool = await getPool();
-  const name = cleanText(payload.name, 'Category name');
+  const db = await getReadyPool();
   const projectId = cleanId(payload.projectId, 'Project');
+  const name = cleanText(payload.name, 'Category name');
 
-  await pool.request()
-    .input('projectId', sql.Int, projectId)
-    .input('name', sql.NVarChar(120), name)
-    .query('INSERT INTO dbo.Categories (ProjectId, Name) VALUES (@projectId, @name)');
+  await db.query(
+    'INSERT INTO categories (project_id, name) VALUES ($1, $2)',
+    [projectId, name]
+  );
 }
 
 async function addExpense(payload) {
-  const pool = await getPool();
+  const db = await getReadyPool();
   const projectId = cleanId(payload.projectId, 'Project');
-
+  const categoryId = cleanId(payload.categoryId, 'Category');
+  const memberId = cleanId(payload.memberId, 'Member');
   const name = cleanText(payload.name, 'Sub category');
   const amount = cleanAmount(payload.amount, 'Amount');
-  const categoryId = Number(payload.categoryId);
-  const memberId = Number(payload.memberId);
   const paymentMethod = payload.paymentMethod === 'online' ? 'online' : 'cash';
 
-  if (!Number.isInteger(categoryId) || !Number.isInteger(memberId)) {
-    throw new Error('Category and member are required.');
-  }
+  const validation = await db.query(`
+    SELECT
+      EXISTS (
+        SELECT 1 FROM categories WHERE project_id = $1 AND category_id = $2
+      ) AS "categoryExists",
+      EXISTS (
+        SELECT 1 FROM members WHERE project_id = $1 AND member_id = $3
+      ) AS "memberExists"
+  `, [projectId, categoryId, memberId]);
 
-  const validation = await pool.request()
-    .input('projectId', sql.Int, projectId)
-    .input('categoryId', sql.Int, categoryId)
-    .input('memberId', sql.Int, memberId)
-    .query(`
-      SELECT
-        CASE WHEN EXISTS (
-          SELECT 1 FROM dbo.Categories WHERE ProjectId = @projectId AND CategoryId = @categoryId
-        ) THEN 1 ELSE 0 END AS categoryExists,
-        CASE WHEN EXISTS (
-          SELECT 1 FROM dbo.Members WHERE ProjectId = @projectId AND MemberId = @memberId
-        ) THEN 1 ELSE 0 END AS memberExists
-    `);
-
-  if (!validation.recordset[0]?.categoryExists || !validation.recordset[0]?.memberExists) {
+  if (!validation.rows[0]?.categoryExists || !validation.rows[0]?.memberExists) {
     throw new Error('Selected category or member does not belong to this trip.');
   }
 
-  await pool.request()
-    .input('categoryId', sql.Int, categoryId)
-    .input('memberId', sql.Int, memberId)
-    .input('name', sql.NVarChar(160), name)
-    .input('amount', sql.Decimal(12, 2), amount)
-    .input('paymentMethod', sql.NVarChar(20), paymentMethod)
-    .query(`
-      INSERT INTO dbo.ExpenseItems (CategoryId, MemberId, Name, Amount, PaymentMethod)
-      VALUES (@categoryId, @memberId, @name, @amount, @paymentMethod)
-    `);
-}
-
-function cleanId(value, fieldName) {
-  const id = Number(value);
-  if (!Number.isInteger(id) || id <= 0) throw new Error(`${fieldName} is required.`);
-  return id;
+  await db.query(`
+    INSERT INTO expense_items (category_id, member_id, name, amount, payment_method)
+    VALUES ($1, $2, $3, $4, $5)
+  `, [categoryId, memberId, name, amount, paymentMethod]);
 }
 
 async function updateCategory(payload) {
-  const pool = await getPool();
+  const db = await getReadyPool();
   const projectId = cleanId(payload.projectId, 'Project');
   const categoryId = cleanId(payload.categoryId, 'Category');
   const name = cleanText(payload.name, 'Category name');
 
-  const result = await pool.request()
-    .input('projectId', sql.Int, projectId)
-    .input('categoryId', sql.Int, categoryId)
-    .input('name', sql.NVarChar(120), name)
-    .query('UPDATE dbo.Categories SET Name = @name WHERE ProjectId = @projectId AND CategoryId = @categoryId');
+  const result = await db.query(
+    'UPDATE categories SET name = $1 WHERE project_id = $2 AND category_id = $3',
+    [name, projectId, categoryId]
+  );
 
-  if (!result.rowsAffected[0]) throw new Error('Category was not found.');
+  if (!result.rowCount) throw new Error('Category was not found.');
 }
 
 async function deleteCategory(payload) {
-  const pool = await getPool();
+  const db = await getReadyPool();
   const projectId = cleanId(payload.projectId, 'Project');
   const categoryId = cleanId(payload.categoryId, 'Category');
 
-  const result = await pool.request()
-    .input('projectId', sql.Int, projectId)
-    .input('categoryId', sql.Int, categoryId)
-    .query('DELETE FROM dbo.Categories WHERE ProjectId = @projectId AND CategoryId = @categoryId');
+  const result = await db.query(
+    'DELETE FROM categories WHERE project_id = $1 AND category_id = $2',
+    [projectId, categoryId]
+  );
 
-  if (!result.rowsAffected[0]) throw new Error('Category was not found.');
+  if (!result.rowCount) throw new Error('Category was not found.');
 }
 
 async function deleteExpense(payload) {
-  const pool = await getPool();
+  const db = await getReadyPool();
   const projectId = cleanId(payload.projectId, 'Project');
   const expenseId = cleanId(payload.expenseId, 'Expense');
 
-  const result = await pool.request()
-    .input('projectId', sql.Int, projectId)
-    .input('expenseId', sql.Int, expenseId)
-    .query(`
-      DELETE e
-      FROM dbo.ExpenseItems e
-      INNER JOIN dbo.Categories c ON c.CategoryId = e.CategoryId
-      WHERE c.ProjectId = @projectId AND e.ExpenseItemId = @expenseId
-    `);
+  const result = await db.query(`
+    DELETE FROM expense_items e
+    USING categories c
+    WHERE c.category_id = e.category_id
+      AND c.project_id = $1
+      AND e.expense_item_id = $2
+  `, [projectId, expenseId]);
 
-  if (!result.rowsAffected[0]) throw new Error('Expense was not found.');
+  if (!result.rowCount) throw new Error('Expense was not found.');
 }
 
 async function handleApi(req, res) {
