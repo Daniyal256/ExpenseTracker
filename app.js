@@ -32,6 +32,7 @@ const els = {
   copyCodeButton: document.querySelector('#copyCodeButton'),
   copyModifierButton: document.querySelector('#copyModifierButton'),
   modifierActions: document.querySelector('#modifierActions'),
+  deleteProjectButton: document.querySelector('#deleteProjectButton'),
   leaveProjectButton: document.querySelector('#leaveProjectButton'),
   projectList: document.querySelector('#projectList'),
   memberForm: document.querySelector('#memberForm'),
@@ -488,6 +489,24 @@ els.shareModifierButton.addEventListener('click', async () => {
 els.leaveProjectButton.addEventListener('click', () => {
   forgetCurrentProject();
   showToast('Expense card removed from this device.');
+});
+
+els.deleteProjectButton.addEventListener('click', async () => {
+  if (!canModify()) {
+    showToast('Modifier code is required to delete this expense card.');
+    return;
+  }
+
+  const ok = window.confirm('Delete this entire expense card for everyone? This cannot be undone.');
+  if (!ok) return;
+
+  try {
+    await apiRequest('/api/projects/delete', activeProjectPayload());
+    forgetCurrentProject();
+    showToast('Expense card deleted.');
+  } catch (error) {
+    showToast(`Could not delete expense card: ${error.message}`);
+  }
 });
 
 els.projectList.addEventListener('click', event => {

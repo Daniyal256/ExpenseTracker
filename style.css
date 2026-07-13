@@ -239,6 +239,11 @@ select:focus {
   box-shadow: 0 12px 28px rgba(34, 56, 43, 0.1);
 }
 
+.danger-button {
+  color: #8d2e24;
+  background: rgba(200, 105, 75, 0.12);
+}
+
 .project-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));

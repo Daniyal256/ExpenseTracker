@@ -390,6 +390,19 @@ async function deleteExpense(payload) {
   if (!result.rowCount) throw new Error('Expense was not found.');
 }
 
+async function deleteProject(payload) {
+  const db = await getReadyPool();
+  const projectId = cleanId(payload.projectId, 'Project');
+  await requireModifierAccess(projectId, payload.accessCode);
+
+  const result = await db.query(
+    'DELETE FROM projects WHERE project_id = $1',
+    [projectId]
+  );
+
+  if (!result.rowCount) throw new Error('Expense card was not found.');
+}
+
 async function handleApi(req, res) {
   try {
     const route = req.url.split('?')[0];
@@ -410,6 +423,17 @@ async function handleApi(req, res) {
       else if (route === '/api/categories/delete') await deleteCategory(payload);
       else if (route === '/api/expenses') await addExpense(payload);
       else if (route === '/api/expenses/delete') await deleteExpense(payload);
+      else if (route === '/api/projects/delete') {
+        await deleteProject(payload);
+        sendJson(res, 200, {
+          projects: [],
+          project: null,
+          members: [],
+          categories: [],
+          expenses: []
+        });
+        return;
+      }
       else {
         sendJson(res, 404, { error: 'API route not found.' });
         return;
