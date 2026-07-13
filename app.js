@@ -25,8 +25,12 @@ const els = {
   joinCode: document.querySelector('#joinCode'),
   shareCodeBox: document.querySelector('#shareCodeBox'),
   shareCodeText: document.querySelector('#shareCodeText'),
+  modifierCodeGroup: document.querySelector('#modifierCodeGroup'),
+  modifierCodeText: document.querySelector('#modifierCodeText'),
   shareExpenseButton: document.querySelector('#shareExpenseButton'),
+  shareModifierButton: document.querySelector('#shareModifierButton'),
   copyCodeButton: document.querySelector('#copyCodeButton'),
+  copyModifierButton: document.querySelector('#copyModifierButton'),
   projectList: document.querySelector('#projectList'),
   memberForm: document.querySelector('#memberForm'),
   memberName: document.querySelector('#memberName'),
@@ -82,7 +86,7 @@ async function syncFromServer(projectId = activeProjectId) {
 async function mutate(path, payload) {
   state = await apiRequest(path, payload);
   activeProjectId = state.project?.id || null;
-  rememberCode(state.project?.shareCode);
+  rememberCode(state.project?.modifierCode || state.project?.viewerCode);
   creatingNewProject = false;
   render();
 }
@@ -102,11 +106,18 @@ function rememberCode(code) {
   localStorage.setItem(codeStoreKey, JSON.stringify(nextCodes));
 }
 
-function getSharePayload() {
-  const code = state.project?.shareCode;
+function getActiveAccessCode() {
+  return state.project?.modifierCode || state.project?.viewerCode || null;
+}
+
+function canModify() {
+  return state.project?.accessLevel === 'modifier';
+}
+
+function getSharePayload(code, accessLabel) {
   const tripName = state.project?.name || 'ExpenseTracker trip';
   const url = window.location.origin;
-  const text = `Join my ExpenseTracker card "${tripName}" with code ${code}. Open ${url} and enter the code.`;
+  const text = `Join my ExpenseTracker card "${tripName}" as ${accessLabel} with code ${code}. Open ${url} and enter the code.`;
 
   return {
     title: tripName,
@@ -117,7 +128,7 @@ function getSharePayload() {
 
 function activeProjectPayload() {
   if (!activeProjectId) throw new Error('Open or create an expense card first.');
-  return { projectId: activeProjectId };
+  return { projectId: activeProjectId, accessCode: getActiveAccessCode() };
 }
 
 function categoryTotal(categoryId) {
@@ -148,8 +159,11 @@ function render() {
   els.projectName.value = creatingNewProject ? '' : state.project?.name || '';
   els.budgetInput.value = creatingNewProject ? '' : budget || '';
   els.budgetButton.textContent = state.project && !creatingNewProject ? 'Save expense' : 'Create expense';
-  els.shareCodeText.textContent = state.project?.shareCode || '';
-  els.shareCodeBox.hidden = !state.project?.shareCode || creatingNewProject;
+  els.shareCodeText.textContent = state.project?.viewerCode || '';
+  els.modifierCodeText.textContent = state.project?.modifierCode || '';
+  els.shareCodeBox.hidden = !state.project?.viewerCode || creatingNewProject;
+  els.modifierCodeGroup.hidden = !state.project?.modifierCode || !canModify();
+  els.modifierActions.hidden = !state.project?.modifierCode || !canModify();
   els.budgetTotal.textContent = formatter.format(budget);
   els.spentTotal.textContent = formatter.format(spent);
   els.remainingTotal.textContent = formatter.format(remaining);
@@ -179,7 +193,7 @@ function renderProjects() {
       <button class="project-card ${isActive ? 'active' : ''}" type="button" data-project-id="${project.id}">
         <span>
           <strong>${escapeHtml(project.name)}</strong>
-          <small>${escapeHtml(project.shareCode)} · ${Number(project.itemCount || 0)} ${Number(project.itemCount || 0) === 1 ? 'expense item' : 'expense items'}</small>
+          <small>${escapeHtml(project.accessLevel)} · ${escapeHtml(project.viewerCode)} · ${Number(project.itemCount || 0)} ${Number(project.itemCount || 0) === 1 ? 'expense item' : 'expense items'}</small>
         </span>
         <span class="project-card-metrics">
           <b>${formatter.format(spent)}</b>
@@ -213,6 +227,17 @@ function renderCategories() {
 
   els.categoryList.innerHTML = state.categories.map(category => {
     const expenses = state.expenses.filter(expense => Number(expense.categoryId) === Number(category.id));
+    const expenseActions = expense => canModify()
+      ? `<button class="icon-button danger" type="button" data-action="delete-expense" data-expense-id="${expense.id}" aria-label="Delete expense">Delete</button>`
+      : '';
+    const categoryActions = canModify()
+      ? `
+          <div class="row-actions">
+            <button class="icon-button" type="button" data-action="edit-category" data-category-id="${category.id}" data-category-name="${escapeHtml(category.name)}">Edit</button>
+            <button class="icon-button danger" type="button" data-action="delete-category" data-category-id="${category.id}">Delete</button>
+          </div>
+        `
+      : '';
     const rows = expenses.length
       ? expenses.map(expense => `
           <div class="expense-row">
@@ -224,7 +249,7 @@ function renderCategories() {
               </div>
             </div>
             <span class="amount">${formatter.format(Number(expense.amount))}</span>
-            <button class="icon-button danger" type="button" data-action="delete-expense" data-expense-id="${expense.id}" aria-label="Delete expense">Delete</button>
+            ${expenseActions(expense)}
           </div>
         `).join('')
       : '<div class="empty">No sub categories added here yet.</div>';
@@ -240,10 +265,7 @@ function renderCategories() {
             <span class="category-total">${formatter.format(categoryTotal(category.id))}</span>
             <span class="chevron" aria-hidden="true">⌄</span>
           </button>
-          <div class="row-actions">
-            <button class="icon-button" type="button" data-action="edit-category" data-category-id="${category.id}" data-category-name="${escapeHtml(category.name)}">Edit</button>
-            <button class="icon-button danger" type="button" data-action="delete-category" data-category-id="${category.id}">Delete</button>
-          </div>
+          ${categoryActions}
         </div>
         <div class="expense-list">${rows}</div>
       </article>
@@ -281,7 +303,7 @@ function renderSummary() {
 }
 
 function setFormAvailability() {
-  const tripReady = Boolean(state.project) && !creatingNewProject;
+  const tripReady = Boolean(state.project) && !creatingNewProject && canModify();
   const canAddExpense = tripReady && state.categories.length > 0 && state.members.length > 0;
 
   setDisabled(els.memberForm, !tripReady);
@@ -373,7 +395,7 @@ els.joinForm.addEventListener('submit', async event => {
 });
 
 els.copyCodeButton.addEventListener('click', async () => {
-  const code = state.project?.shareCode;
+  const code = state.project?.viewerCode;
   if (!code) return;
 
   try {
@@ -385,10 +407,10 @@ els.copyCodeButton.addEventListener('click', async () => {
 });
 
 els.shareExpenseButton.addEventListener('click', async () => {
-  const code = state.project?.shareCode;
+  const code = state.project?.viewerCode;
   if (!code) return;
 
-  const payload = getSharePayload();
+  const payload = getSharePayload(code, 'viewer');
   try {
     if (navigator.share) {
       await navigator.share(payload);
@@ -400,6 +422,38 @@ els.shareExpenseButton.addEventListener('click', async () => {
   } catch (error) {
     if (error.name !== 'AbortError') {
       showToast(`Expense code: ${code}`);
+    }
+  }
+});
+
+els.copyModifierButton.addEventListener('click', async () => {
+  const code = state.project?.modifierCode;
+  if (!code) return;
+
+  try {
+    await navigator.clipboard.writeText(code);
+    showToast('Modifier code copied.');
+  } catch {
+    showToast(`Modifier code: ${code}`);
+  }
+});
+
+els.shareModifierButton.addEventListener('click', async () => {
+  const code = state.project?.modifierCode;
+  if (!code) return;
+
+  const payload = getSharePayload(code, 'modifier');
+  try {
+    if (navigator.share) {
+      await navigator.share(payload);
+      return;
+    }
+
+    await navigator.clipboard.writeText(payload.text);
+    showToast('Modifier share message copied.');
+  } catch (error) {
+    if (error.name !== 'AbortError') {
+      showToast(`Modifier code: ${code}`);
     }
   }
 });
@@ -434,6 +488,7 @@ els.budgetForm.addEventListener('submit', async event => {
   event.preventDefault();
   const payload = {
     projectId: creatingNewProject ? null : activeProjectId,
+    accessCode: creatingNewProject ? null : getActiveAccessCode(),
     name: els.projectName.value.trim(),
     budget: Number(els.budgetInput.value)
   };

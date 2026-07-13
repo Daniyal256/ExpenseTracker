@@ -1,20 +1,35 @@
 CREATE TABLE IF NOT EXISTS projects (
     project_id SERIAL PRIMARY KEY,
-    share_code VARCHAR(16) UNIQUE,
+    viewer_code VARCHAR(7) UNIQUE,
+    modifier_code VARCHAR(7) UNIQUE,
     name VARCHAR(120) NOT NULL,
     budget NUMERIC(12,2) NOT NULL CHECK (budget >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS share_code VARCHAR(16);
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS viewer_code VARCHAR(7);
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS modifier_code VARCHAR(7);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_projects_share_code ON projects(share_code);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_projects_viewer_code ON projects(viewer_code);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_projects_modifier_code ON projects(modifier_code);
 
 UPDATE projects
 SET share_code = UPPER(SUBSTRING(MD5(project_id::text || created_at::text), 1, 8))
 WHERE share_code IS NULL;
 
+UPDATE projects
+SET viewer_code = UPPER(SUBSTRING(COALESCE(share_code, MD5(project_id::text || created_at::text || 'VIEW')), 1, 7))
+WHERE viewer_code IS NULL;
+
+UPDATE projects
+SET modifier_code = UPPER(SUBSTRING(MD5(project_id::text || created_at::text || 'MOD'), 1, 7))
+WHERE modifier_code IS NULL;
+
 ALTER TABLE projects ALTER COLUMN share_code SET NOT NULL;
+ALTER TABLE projects ALTER COLUMN viewer_code SET NOT NULL;
+ALTER TABLE projects ALTER COLUMN modifier_code SET NOT NULL;
 
 CREATE TABLE IF NOT EXISTS members (
     member_id SERIAL PRIMARY KEY,

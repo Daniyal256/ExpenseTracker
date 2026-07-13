@@ -101,28 +101,23 @@ function cleanId(value, fieldName) {
   return id;
 }
 
-function cleanShareCode(value) {
+function cleanAccessCode(value) {
   const code = String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (!code) throw new Error('Expense code is required.');
-  return code.slice(0, 16);
+  return code.slice(0, 7);
 }
 
 function getKnownCodesFromUrl(requestedUrl) {
   const rawCodes = requestedUrl.searchParams.get('codes') || '';
   const singleCode = requestedUrl.searchParams.get('code') || '';
   return [...rawCodes.split(','), singleCode]
-    .map(code => code.trim().toUpperCase().replace(/[^A-Z0-9]/g, ''))
+    .map(code => code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7))
     .filter(Boolean)
     .slice(0, 50);
 }
 
-function makeShareCode(name) {
-  const prefix = String(name || 'TRIP')
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, '')
-    .slice(0, 6) || 'TRIP';
-  const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
-  return `${prefix}${suffix}`.slice(0, 12);
+function makeAccessCode() {
+  return Math.random().toString(36).slice(2, 9).toUpperCase().padEnd(7, 'X').slice(0, 7);
 }
 
 async function getState(requestPath = '/api/state') {
@@ -148,7 +143,7 @@ async function getState(requestPath = '/api/state') {
 
   const [projectResult, memberResult, categoryResult, itemResult] = await Promise.all([
     db.query(
-      'SELECT project_id AS id, share_code AS "shareCode", name, budget FROM projects WHERE project_id = $1',
+      'SELECT project_id AS id, name, budget FROM projects WHERE project_id = $1',
       [projectId]
     ),
     db.query(
@@ -173,9 +168,18 @@ async function getState(requestPath = '/api/state') {
     `, [projectId])
   ]);
 
+  const accessProject = projects.find(project => Number(project.id) === Number(projectId));
+
   return {
     projects,
-    project: projectResult.rows[0] || null,
+    project: projectResult.rows[0]
+      ? {
+          ...projectResult.rows[0],
+          viewerCode: accessProject?.viewerCode || null,
+          modifierCode: accessProject?.modifierCode || null,
+          accessLevel: accessProject?.accessLevel || 'viewer'
+        }
+      : null,
     members: memberResult.rows,
     categories: categoryResult.rows,
     expenses: itemResult.rows
@@ -187,7 +191,9 @@ async function getProjects(db, knownCodes = []) {
 
   const result = await db.query(`
     SELECT p.project_id AS id,
-           p.share_code AS "shareCode",
+           p.viewer_code AS "viewerCode",
+           CASE WHEN p.modifier_code = ANY($1::text[]) THEN p.modifier_code ELSE NULL END AS "modifierCode",
+           CASE WHEN p.modifier_code = ANY($1::text[]) THEN 'modifier' ELSE 'viewer' END AS "accessLevel",
            p.name,
            p.budget,
            COALESCE(SUM(e.amount), 0) AS spent,
@@ -195,8 +201,8 @@ async function getProjects(db, knownCodes = []) {
     FROM projects p
     LEFT JOIN categories c ON c.project_id = p.project_id
     LEFT JOIN expense_items e ON e.category_id = c.category_id
-    WHERE p.share_code = ANY($1::text[])
-    GROUP BY p.project_id, p.name, p.budget, p.created_at
+    WHERE p.viewer_code = ANY($1::text[]) OR p.modifier_code = ANY($1::text[])
+    GROUP BY p.project_id, p.viewer_code, p.modifier_code, p.name, p.budget, p.created_at
     ORDER BY p.created_at DESC, p.project_id DESC
   `, [knownCodes]);
 
@@ -210,6 +216,7 @@ async function updateBudget(payload) {
   const projectId = Number(payload.projectId);
 
   if (Number.isInteger(projectId) && projectId > 0) {
+    await requireModifierAccess(projectId, payload.accessCode);
     const result = await db.query(
       'UPDATE projects SET name = $1, budget = $2 WHERE project_id = $3',
       [name, budget, projectId]
@@ -224,11 +231,17 @@ async function updateBudget(payload) {
 
 async function insertProjectWithCode(db, name, budget) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const shareCode = makeShareCode(name);
+    const viewerCode = makeAccessCode();
+    const modifierCode = makeAccessCode();
+    if (viewerCode === modifierCode) continue;
     try {
       return await db.query(
-        'INSERT INTO projects (share_code, name, budget) VALUES ($1, $2, $3) RETURNING project_id AS id, share_code AS "shareCode"',
-        [shareCode, name, budget]
+        `
+          INSERT INTO projects (share_code, viewer_code, modifier_code, name, budget)
+          VALUES ($1, $2, $3, $4, $5)
+          RETURNING project_id AS id, modifier_code AS "modifierCode"
+        `,
+        [viewerCode, viewerCode, modifierCode, name, budget]
       );
     } catch (error) {
       if (error.code !== '23505') throw error;
@@ -239,31 +252,48 @@ async function insertProjectWithCode(db, name, budget) {
 
 async function joinProject(payload) {
   const db = await getReadyPool();
-  const shareCode = cleanShareCode(payload.code);
+  const accessCode = cleanAccessCode(payload.code);
   const result = await db.query(
-    'SELECT project_id AS id FROM projects WHERE share_code = $1',
-    [shareCode]
+    'SELECT project_id AS id FROM projects WHERE viewer_code = $1 OR modifier_code = $1',
+    [accessCode]
   );
 
   if (!result.rows[0]) throw new Error('No expense card found for that code.');
   return result.rows[0].id;
 }
 
-async function getShareCodeByProjectId(projectId) {
+async function getAccessCodeByProjectId(projectId, preferredCode) {
   const id = Number(projectId);
   if (!Number.isInteger(id) || id <= 0) return null;
 
+  const cleanPreferredCode = preferredCode ? cleanAccessCode(preferredCode) : null;
   const db = await getReadyPool();
   const result = await db.query(
-    'SELECT share_code AS "shareCode" FROM projects WHERE project_id = $1',
+    'SELECT viewer_code AS "viewerCode", modifier_code AS "modifierCode" FROM projects WHERE project_id = $1',
     [id]
   );
-  return result.rows[0]?.shareCode || null;
+  const project = result.rows[0];
+  if (!project) return null;
+  if (cleanPreferredCode === project.viewerCode || cleanPreferredCode === project.modifierCode) {
+    return cleanPreferredCode;
+  }
+  return project.modifierCode || project.viewerCode;
+}
+
+async function requireModifierAccess(projectId, accessCode) {
+  const db = await getReadyPool();
+  const cleanCode = cleanAccessCode(accessCode);
+  const result = await db.query(
+    'SELECT 1 FROM projects WHERE project_id = $1 AND modifier_code = $2',
+    [projectId, cleanCode]
+  );
+  if (!result.rows[0]) throw new Error('Modifier code is required to change this expense card.');
 }
 
 async function addMember(payload) {
   const db = await getReadyPool();
   const projectId = cleanId(payload.projectId, 'Project');
+  await requireModifierAccess(projectId, payload.accessCode);
   const name = cleanText(payload.name, 'Member name');
 
   await db.query(
@@ -275,6 +305,7 @@ async function addMember(payload) {
 async function addCategory(payload) {
   const db = await getReadyPool();
   const projectId = cleanId(payload.projectId, 'Project');
+  await requireModifierAccess(projectId, payload.accessCode);
   const name = cleanText(payload.name, 'Category name');
 
   await db.query(
@@ -286,6 +317,7 @@ async function addCategory(payload) {
 async function addExpense(payload) {
   const db = await getReadyPool();
   const projectId = cleanId(payload.projectId, 'Project');
+  await requireModifierAccess(projectId, payload.accessCode);
   const categoryId = cleanId(payload.categoryId, 'Category');
   const memberId = cleanId(payload.memberId, 'Member');
   const name = cleanText(payload.name, 'Sub category');
@@ -315,6 +347,7 @@ async function addExpense(payload) {
 async function updateCategory(payload) {
   const db = await getReadyPool();
   const projectId = cleanId(payload.projectId, 'Project');
+  await requireModifierAccess(projectId, payload.accessCode);
   const categoryId = cleanId(payload.categoryId, 'Category');
   const name = cleanText(payload.name, 'Category name');
 
@@ -329,6 +362,7 @@ async function updateCategory(payload) {
 async function deleteCategory(payload) {
   const db = await getReadyPool();
   const projectId = cleanId(payload.projectId, 'Project');
+  await requireModifierAccess(projectId, payload.accessCode);
   const categoryId = cleanId(payload.categoryId, 'Category');
 
   const result = await db.query(
@@ -342,6 +376,7 @@ async function deleteCategory(payload) {
 async function deleteExpense(payload) {
   const db = await getReadyPool();
   const projectId = cleanId(payload.projectId, 'Project');
+  await requireModifierAccess(projectId, payload.accessCode);
   const expenseId = cleanId(payload.expenseId, 'Expense');
 
   const result = await db.query(`
@@ -383,8 +418,8 @@ async function handleApi(req, res) {
       const stateParams = new URLSearchParams();
       if (selectedProjectId) stateParams.set('projectId', selectedProjectId);
       const selectedShareCode = route === '/api/join' && payload.code
-        ? cleanShareCode(payload.code)
-        : await getShareCodeByProjectId(selectedProjectId);
+        ? cleanAccessCode(payload.code)
+        : await getAccessCodeByProjectId(selectedProjectId, payload.accessCode);
       if (selectedShareCode) stateParams.set('code', selectedShareCode);
       const statePath = `/api/state${stateParams.toString() ? `?${stateParams}` : ''}`;
       sendJson(res, 200, await getState(statePath));

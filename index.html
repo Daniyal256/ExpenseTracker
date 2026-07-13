@@ -66,12 +66,20 @@
       </form>
       <div id="shareCodeBox" class="share-code-box" hidden>
         <span>
-          <small>Current expense code</small>
+          <small>Viewer code</small>
           <strong id="shareCodeText"></strong>
         </span>
         <div class="share-actions">
-          <button id="shareExpenseButton" class="secondary-button" type="button">Share</button>
+          <button id="shareExpenseButton" class="secondary-button" type="button">Share viewer</button>
           <button id="copyCodeButton" class="secondary-button" type="button">Copy code</button>
+        </div>
+        <span id="modifierCodeGroup">
+          <small>Modifier code</small>
+          <strong id="modifierCodeText"></strong>
+        </span>
+        <div id="modifierActions" class="share-actions">
+          <button id="shareModifierButton" class="secondary-button" type="button">Share modifier</button>
+          <button id="copyModifierButton" class="secondary-button" type="button">Copy modifier</button>
         </div>
       </div>
       <div id="projectList" class="project-list"></div>
