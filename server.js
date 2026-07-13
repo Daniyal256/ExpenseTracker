@@ -227,7 +227,7 @@ async function insertProjectWithCode(db, name, budget) {
     const shareCode = makeShareCode(name);
     try {
       return await db.query(
-        'INSERT INTO projects (share_code, name, budget) VALUES ($1, $2, $3) RETURNING project_id AS id',
+        'INSERT INTO projects (share_code, name, budget) VALUES ($1, $2, $3) RETURNING project_id AS id, share_code AS "shareCode"',
         [shareCode, name, budget]
       );
     } catch (error) {
@@ -247,6 +247,18 @@ async function joinProject(payload) {
 
   if (!result.rows[0]) throw new Error('No expense card found for that code.');
   return result.rows[0].id;
+}
+
+async function getShareCodeByProjectId(projectId) {
+  const id = Number(projectId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+
+  const db = await getReadyPool();
+  const result = await db.query(
+    'SELECT share_code AS "shareCode" FROM projects WHERE project_id = $1',
+    [id]
+  );
+  return result.rows[0]?.shareCode || null;
 }
 
 async function addMember(payload) {
@@ -370,7 +382,10 @@ async function handleApi(req, res) {
 
       const stateParams = new URLSearchParams();
       if (selectedProjectId) stateParams.set('projectId', selectedProjectId);
-      if (route === '/api/join' && payload.code) stateParams.set('code', cleanShareCode(payload.code));
+      const selectedShareCode = route === '/api/join' && payload.code
+        ? cleanShareCode(payload.code)
+        : await getShareCodeByProjectId(selectedProjectId);
+      if (selectedShareCode) stateParams.set('code', selectedShareCode);
       const statePath = `/api/state${stateParams.toString() ? `?${stateParams}` : ''}`;
       sendJson(res, 200, await getState(statePath));
       return;
